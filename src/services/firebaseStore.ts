@@ -9,7 +9,8 @@ import {
   getDocs,
   onSnapshot,
   writeBatch,
-  arrayUnion
+  arrayUnion,
+  addDoc
 } from 'firebase/firestore';
 import {
   getDatabase,
@@ -17,7 +18,8 @@ import {
   set as rtdbSet,
   remove as rtdbRemove,
   get as rtdbGet,
-  onValue as rtdbOnValue
+  onValue as rtdbOnValue,
+  push as rtdbPush
 } from 'firebase/database';
 import {
   getAuth,
@@ -28,7 +30,7 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord, VideoCallSession, CallChatMessage, CallStatus } from '../types';
+import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord, VideoCallSession, CallChatMessage, CallStatus, CallParticipant, MultiPeerSignal } from '../types';
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
@@ -643,6 +645,155 @@ export async function fetchCallSessionById(callId: string): Promise<VideoCallSes
     console.error('Error fetching call session by ID', e);
     return null;
   }
+}
+
+// ----------------------------------------------------
+// Multi-Party / Group Video Call Signaling & Presence
+// ----------------------------------------------------
+
+export async function joinRoomParticipant(callId: string, participant: CallParticipant) {
+  try {
+    const participantDoc = doc(db, 'calls', callId, 'participants', participant.peerId);
+    await setDoc(participantDoc, participant, { merge: true });
+
+    // Also update participants map in the main call document for easy overview
+    const mainDocRef = doc(db, 'calls', callId);
+    await setDoc(mainDocRef, {
+      [`participants.${participant.peerId}`]: participant,
+      status: 'connected',
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+
+    try {
+      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/participants/${participant.peerId}`), participant);
+    } catch (e) {}
+  } catch (e) {
+    console.error('Error joining room participant', e);
+  }
+}
+
+export async function leaveRoomParticipant(callId: string, peerId: string) {
+  try {
+    const participantDoc = doc(db, 'calls', callId, 'participants', peerId);
+    await deleteDoc(participantDoc);
+
+    try {
+      await rtdbRemove(rtdbRef(rtdb, `calls/${callId}/participants/${peerId}`));
+    } catch (e) {}
+  } catch (e) {
+    console.error('Error leaving room participant', e);
+  }
+}
+
+export async function updateParticipantState(
+  callId: string, 
+  peerId: string, 
+  state: Partial<CallParticipant>
+) {
+  try {
+    const participantDoc = doc(db, 'calls', callId, 'participants', peerId);
+    await setDoc(participantDoc, state, { merge: true });
+
+    try {
+      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/participants/${peerId}/isMuted`), state.isMuted ?? false);
+      if (state.isVideoOff !== undefined) {
+        await rtdbSet(rtdbRef(rtdb, `calls/${callId}/participants/${peerId}/isVideoOff`), state.isVideoOff);
+      }
+    } catch (e) {}
+  } catch (e) {
+    console.error('Error updating participant state', e);
+  }
+}
+
+export function subscribeRoomParticipants(
+  callId: string, 
+  callback: (participants: CallParticipant[]) => void
+): () => void {
+  const colRef = collection(db, 'calls', callId, 'participants');
+  return onSnapshot(colRef, (snapshot) => {
+    const list: CallParticipant[] = [];
+    snapshot.forEach((doc) => {
+      list.push(doc.data() as CallParticipant);
+    });
+    callback(list);
+  }, (err) => {
+    console.warn('Error subscribing to participants:', err);
+    // RTDB fallback
+    try {
+      rtdbOnValue(rtdbRef(rtdb, `calls/${callId}/participants`), (snap) => {
+        if (snap.exists()) {
+          const val = snap.val();
+          const list = Object.values(val) as CallParticipant[];
+          callback(list);
+        } else {
+          callback([]);
+        }
+      });
+    } catch (e) {}
+  });
+}
+
+export async function sendRoomSignal(callId: string, signal: MultiPeerSignal) {
+  try {
+    const sigCol = collection(db, 'calls', callId, 'signals');
+    await addDoc(sigCol, {
+      ...signal,
+      createdAt: Date.now()
+    });
+
+    try {
+      await rtdbPush(rtdbRef(rtdb, `calls/${callId}/signals/${signal.toPeerId}`), signal);
+    } catch (e) {}
+  } catch (e) {
+    console.error('Error sending room signal', e);
+  }
+}
+
+export function subscribeRoomSignals(
+  callId: string, 
+  localPeerId: string, 
+  callback: (signal: MultiPeerSignal) => void
+): () => void {
+  const sigCol = collection(db, 'calls', callId, 'signals');
+  const seenSignalIds = new Set<string>();
+
+  const unsubFirestore = onSnapshot(sigCol, (snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+      if (change.type === 'added') {
+        const sig = change.doc.data() as MultiPeerSignal;
+        const sigId = change.doc.id;
+        if (!seenSignalIds.has(sigId) && sig.toPeerId === localPeerId && sig.fromPeerId !== localPeerId) {
+          seenSignalIds.add(sigId);
+          callback({ ...sig, id: sigId });
+        }
+      }
+    });
+  }, (err) => {
+    console.warn('Firestore signals error, fallback to RTDB:', err);
+  });
+
+  // Also subscribe to RTDB for immediate delivery
+  let unsubRtdb = () => {};
+  try {
+    const rRef = rtdbRef(rtdb, `calls/${callId}/signals/${localPeerId}`);
+    const listener = rtdbOnValue(rRef, (snap) => {
+      if (snap.exists()) {
+        const val = snap.val();
+        Object.entries(val).forEach(([k, s]: [string, any]) => {
+          if (!seenSignalIds.has(k) && s.fromPeerId !== localPeerId) {
+            seenSignalIds.add(k);
+            callback({ ...s, id: k });
+          }
+        });
+      }
+    });
+    unsubRtdb = () => {};
+  } catch (e) {}
+
+  return () => {
+    unsubFirestore();
+    unsubRtdb();
+  };
 }
 
 

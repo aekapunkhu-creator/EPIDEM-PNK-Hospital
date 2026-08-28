@@ -4,7 +4,8 @@ import {
   UserAccount, 
   VideoCallSession, 
   CallChatMessage, 
-  HomeVisitRecord 
+  HomeVisitRecord,
+  CallParticipant
 } from '../types';
 import { 
   subscribeCallById, 
@@ -13,13 +14,14 @@ import {
   addCallMessage,
   saveHomeVisitToFirestore 
 } from '../services/firebaseStore';
-import { WebRTCConnection } from '../services/webrtcService';
+import { MultiPeerWebRTCManager, RemoteParticipantStream } from '../services/multiPeerWebRTC';
+import { VideoConferenceGrid } from './VideoConferenceGrid';
 import { callAudio } from '../utils/callAudio';
 import { 
   X, Phone, PhoneOff, PhoneCall, Mic, MicOff, Video as VideoIcon, VideoOff, 
   Monitor, Camera, MessageSquare, Send, Copy, Check, QrCode, 
   Share2, HeartPulse, ShieldCheck, AlertCircle, FileText, CheckCircle2,
-  Users, RefreshCw, Clock, ExternalLink, Sparkles, Building2, User
+  Users, RefreshCw, Clock, ExternalLink, Sparkles, Building2, User, Stethoscope
 } from 'lucide-react';
 
 interface DoctorVideoCallModalProps {
@@ -45,10 +47,22 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
 
   const [callSession, setCallSession] = useState<VideoCallSession | null>(null);
   const [callId, setCallId] = useState<string>('');
-  const [connectionState, setConnectionState] = useState<string>('idle');
   const [callDuration, setCallDuration] = useState<number>(0);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [showQrCode, setShowQrCode] = useState<boolean>(false);
+  const [showParticipantsList, setShowParticipantsList] = useState<boolean>(false);
+
+  // Multi-Peer State
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<RemoteParticipantStream[]>([]);
+  const [participants, setParticipants] = useState<CallParticipant[]>([]);
+  const [localParticipant, setLocalParticipant] = useState<CallParticipant>({
+    peerId: `peer_doc_${currentUser.id}_${Date.now().toString(36)}`,
+    name: currentUser.fullName,
+    role: currentUser.role === 'Admin' ? 'doctor' : 'nurse',
+    roleTitle: currentUser.role === 'Admin' ? 'แพทย์ผู้ตรวจ' : 'พยาบาลวิชาชีพ',
+    joinedAt: new Date().toISOString()
+  });
 
   // Media & Controls
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -73,9 +87,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
   // Captured snapshot
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
 
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const webrtcRef = useRef<WebRTCConnection | null>(null);
+  const webrtcManagerRef = useRef<MultiPeerWebRTCManager | null>(null);
   const timerRef = useRef<any>(null);
 
   // Generate patient access URL
@@ -90,7 +102,6 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
     let activeCallId = existingCallSession?.id;
     
     if (!activeCallId) {
-      // Create new call session ID
       activeCallId = `CALL-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
       const newSession: VideoCallSession = {
         id: activeCallId,
@@ -110,21 +121,17 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
       };
       setCallSession(newSession);
       setCallId(activeCallId);
-      startCallAsDoctor(activeCallId, newSession);
+      startMultiPeerDoctor(activeCallId, newSession);
     } else {
       setCallId(activeCallId);
       setCallSession(existingCallSession);
-      startCallAsDoctor(activeCallId, existingCallSession);
+      startMultiPeerDoctor(activeCallId, existingCallSession);
     }
 
     // Subscribe to Firestore for real-time updates
     const unsub = subscribeCallById(activeCallId, (updated) => {
       if (updated) {
         setCallSession(updated);
-        if (updated.status === 'connected' && (!callSession || callSession.status !== 'connected')) {
-          callAudio.stopOutgoingRing();
-          callAudio.playConnectedSound();
-        }
         if (updated.status === 'ended' || updated.status === 'rejected') {
           callAudio.stopOutgoingRing();
           callAudio.playEndedSound();
@@ -135,8 +142,8 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
     return () => {
       unsub();
       callAudio.stopOutgoingRing();
-      if (webrtcRef.current) {
-        webrtcRef.current.close();
+      if (webrtcManagerRef.current) {
+        webrtcManagerRef.current.leaveRoom();
       }
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -144,35 +151,40 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
     };
   }, [patient.id]);
 
-  // Start Doctor WebRTC
-  const startCallAsDoctor = async (roomId: string, sessionData: VideoCallSession) => {
+  // Start Doctor Multi-Peer Session
+  const startMultiPeerDoctor = async (roomId: string, sessionData: VideoCallSession) => {
     callAudio.playOutgoingRing();
     setMediaError(null);
 
     try {
-      const webrtc = new WebRTCConnection(roomId, 'caller');
-      webrtcRef.current = webrtc;
+      await saveCallSessionToFirestore(sessionData);
 
-      // 1. Get Doctor's Camera & Mic
-      const stream = await webrtc.startLocalMedia(true, true, 'user');
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
+      const manager = new MultiPeerWebRTCManager(roomId, localParticipant);
+      webrtcManagerRef.current = manager;
 
-      // 2. Listen for Patient's remote stream
-      webrtc.onRemoteStream((remoteStream) => {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStream;
-          remoteVideoRef.current.play().catch(() => {});
+      // Listen for remote streams
+      manager.onRemoteStreamsChange((streams) => {
+        setRemoteStreams([...streams]);
+        if (streams.length > 0) {
+          callAudio.stopOutgoingRing();
+          callAudio.playConnectedSound();
+          updateCallStatus(roomId, 'connected');
         }
       });
 
-      webrtc.onConnectionStateChange((state) => {
-        setConnectionState(state);
+      // Listen for participants
+      manager.onParticipantsChange((participantList) => {
+        setParticipants([...participantList]);
+        if (participantList.length > 1) {
+          callAudio.stopOutgoingRing();
+        }
       });
 
-      // 3. Create WebRTC Offer & publish to Firestore
-      await webrtc.initiateCallOffer(sessionData);
+      // Start local camera & join room
+      const stream = await manager.startLocalMedia(true, true, 'user');
+      setLocalStream(stream);
+
+      await manager.joinRoom();
     } catch (err: any) {
       console.error('Error initiating doctor video call:', err);
       setMediaError('ไม่สามารถเปิดกล้องหรือไมโครโฟนได้ กรุณาตรวจสอบสิทธิ์การใช้งานของเบราว์เซอร์');
@@ -181,9 +193,10 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
 
   // Timer Effect
   useEffect(() => {
-    if (callSession?.status === 'connected') {
+    const isConnected = remoteStreams.length > 0 || callSession?.status === 'connected';
+    if (isConnected) {
       callAudio.stopOutgoingRing();
-      const startTime = callSession.startedAt ? new Date(callSession.startedAt).getTime() : Date.now();
+      const startTime = callSession?.startedAt ? new Date(callSession.startedAt).getTime() : Date.now();
       timerRef.current = setInterval(() => {
         const secs = Math.floor((Date.now() - startTime) / 1000);
         setCallDuration(Math.max(0, secs));
@@ -195,52 +208,68 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [callSession?.status]);
+  }, [remoteStreams.length, callSession?.status]);
 
   // Toggle Mute
   const handleToggleMute = () => {
-    if (webrtcRef.current) {
+    if (webrtcManagerRef.current) {
       const newState = !isMuted;
-      webrtcRef.current.toggleAudio(!newState);
+      webrtcManagerRef.current.toggleAudio(!newState);
       setIsMuted(newState);
     }
   };
 
   // Toggle Video
   const handleToggleVideo = () => {
-    if (webrtcRef.current) {
+    if (webrtcManagerRef.current) {
       const newState = !isVideoOff;
-      webrtcRef.current.toggleVideo(!newState);
+      webrtcManagerRef.current.toggleVideo(!newState);
       setIsVideoOff(newState);
     }
   };
 
   // Screen Share
   const handleToggleScreenShare = async () => {
-    if (!webrtcRef.current) return;
+    if (!webrtcManagerRef.current) return;
     if (!isScreenSharing) {
-      const success = await webrtcRef.current.startScreenShare();
-      setIsScreenSharing(success);
+      const screenStream = await webrtcManagerRef.current.startScreenShare();
+      setIsScreenSharing(!!screenStream);
     } else {
-      await webrtcRef.current.stopScreenShare();
+      await webrtcManagerRef.current.stopScreenShare();
       setIsScreenSharing(false);
     }
   };
 
-  // Capture Photo Snapshot of Patient
+  // Capture Photo Snapshot
   const handleCaptureSnapshot = () => {
-    if (!remoteVideoRef.current) return;
     try {
-      const video = remoteVideoRef.current;
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 480;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        setCapturedPhoto(dataUrl);
-        onShowToast('ถ่ายภาพบันทึกหน้าจอคนไข้เรียบร้อยแล้ว');
+      const videoElements = document.querySelectorAll('video');
+      let targetVideo: HTMLVideoElement | null = null;
+
+      // Find remote video
+      videoElements.forEach((v) => {
+        if (!v.muted && v.srcObject) {
+          targetVideo = v;
+        }
+      });
+
+      if (!targetVideo && videoElements.length > 0) {
+        targetVideo = videoElements[0];
+      }
+
+      if (targetVideo) {
+        const canvas = document.createElement('canvas');
+        canvas.width = targetVideo.videoWidth || 640;
+        canvas.height = targetVideo.videoHeight || 480;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(targetVideo, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          setCapturedPhoto(dataUrl);
+          onShowToast('ถ่ายภาพบันทึกหน้าจอผู้ป่วย/เม็ดยาเรียบร้อยแล้ว');
+        }
+      } else {
+        onShowToast('ไม่พบสัญญาณภาพสำหรับบันทึก');
       }
     } catch (e) {
       console.warn('Snapshot failed:', e);
@@ -254,7 +283,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
 
     const newMsg: CallChatMessage = {
       id: `msg-${Date.now()}`,
-      sender: 'doctor',
+      sender: currentUser.role === 'Admin' ? 'doctor' : 'nurse',
       senderName: currentUser.fullName,
       text: chatInput.trim(),
       timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
@@ -269,7 +298,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
     const url = getPatientCallUrl(callId);
     navigator.clipboard.writeText(url);
     setCopiedLink(true);
-    onShowToast('คัดลอกลิงก์ห้องวิดีโอคอลสำหรับคนไข้แล้ว');
+    onShowToast('คัดลอกลิงก์ห้องวิดีโอคอลสำหรับส่งให้ผู้เข้าร่วมแล้ว');
     setTimeout(() => setCopiedLink(false), 3000);
   };
 
@@ -277,7 +306,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
   const handleSendViaLine = () => {
     if (onOpenLineSendModal && patient) {
       const url = getPatientCallUrl(callId);
-      const msg = `🏥 โรงพยาบาลโพนนาแก้ว\nเรียน คุณ${patient.prefix}${patient.firstName} ${patient.lastName} (HN: ${patient.hn})\n\nแพทย์/เจ้าหน้าที่ขอนัดหมายวิดีโอคอลปรึกษาอาการและติดตามการกินยา (Telemedicine)\nโปรดกดลิงก์ด้านล่างเพื่อคุยกับคุณหมอทันที:\n👉 ${url}`;
+      const msg = `🏥 โรงพยาบาลโพนนาแก้ว\nเรียน คุณ${patient.prefix}${patient.firstName} ${patient.lastName} (HN: ${patient.hn}) และทีมผู้ดูแล/อสม.\n\nแพทย์/เจ้าหน้าที่ขอนัดหมายวิดีโอคอลร่วมกัน (Multi-party Telehealth)\nโปรดกดลิงก์ด้านล่างเพื่อเข้าห้องสนทนากับแพทย์ได้ทันที:\n👉 ${url}`;
       onOpenLineSendModal(patient, msg);
     }
   };
@@ -288,7 +317,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
     if (navigator.share) {
       navigator.share({
         title: `วิดีโอคอลพบแพทย์ รพ.โพนนาแก้ว - คุณ${patient.firstName}`,
-        text: `ลิงก์วิดีโอคอลพบแพทย์ โรงพยาบาลโพนนาแก้ว สำหรับคุณ${patient.firstName} ${patient.lastName}`,
+        text: `ลิงก์เข้าสายวิดีโอคอลพบแพทย์ โรงพยาบาลโพนนาแก้ว (เข้าได้ทั้งคนไข้ ญาติ และ อสม.)`,
         url: url
       }).catch(() => {});
     } else {
@@ -301,13 +330,13 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
     callAudio.stopOutgoingRing();
     callAudio.playEndedSound();
 
-    if (webrtcRef.current) {
-      webrtcRef.current.close();
+    if (webrtcManagerRef.current) {
+      await webrtcManagerRef.current.leaveRoom();
     }
 
     setIsSavingNotes(true);
 
-    const fullNotes = `[Telemedicine Video Call]\n- การกินยา: ${evalDotsTaken ? 'กินยาสม่ำเสมอทุกวัน' : 'มีลืมกินยา'}\n- อาการตับอักเสบ/ตาเหลือง: ${evalNoJaundice ? 'ไม่มี (ปกติ)' : 'มีอาการสงสัยตับอักเสบ'}\n- ผื่นแพ้ยา: ${evalNoRash ? 'ไม่มีผื่น' : 'มีผื่นคัน'}\n- อาการไอ: ${evalCoughBetter ? 'ไอลดลง' : 'ยังไอมาก'}\n\nบันทึกเพิ่มเติม:\n${doctorNotes}\n\nคำแนะนำ/ยา:\n${prescriptions}`;
+    const fullNotes = `[Telemedicine Multi-party Video Call]\n- การกินยา: ${evalDotsTaken ? 'กินยาสม่ำเสมอทุกวัน' : 'มีลืมกินยา'}\n- อาการตับอักเสบ/ตาเหลือง: ${evalNoJaundice ? 'ไม่มี (ปกติ)' : 'มีอาการสงสัยตับอักเสบ'}\n- ผื่นแพ้ยา: ${evalNoRash ? 'ไม่มีผื่น' : 'มีผื่นคัน'}\n- อาการไอ: ${evalCoughBetter ? 'ไอลดลง' : 'ยังไอมาก'}\n\nบันทึกเพิ่มเติม:\n${doctorNotes}\n\nคำแนะนำ/ยา:\n${prescriptions}`;
 
     await updateCallStatus(callId, 'ended', {
       endedAt: new Date().toISOString(),
@@ -325,7 +354,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
       }
     });
 
-    // Auto-save as Home Visit / Tele-monitoring record if checked
+    // Auto-save as Home Visit record if checked
     if (saveAsHomeVisit && patient) {
       const visitRecord: HomeVisitRecord = {
         id: `VISIT-TELE-${Date.now()}`,
@@ -352,7 +381,9 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
           psychosocialSupport: true,
           missedAppointment: false
         },
-        vitals: {},
+        vitals: {
+          bodyWeight: patient.weight || 50
+        },
         symptoms: {
           cough: evalCoughBetter ? 'ไอเล็กน้อย (ลดลง)' : 'ไอมาก/เรื้อรัง',
           fever: false,
@@ -364,12 +395,12 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
         },
         dotsSupervisor: {
           type: 'V-DOT',
-          name: patient.dotsSupervisorName || currentUser.fullName,
-          isSupervisingDaily: evalDotsTaken
+          name: patient.dotsSupervisorName || 'อสม. พี่เลี้ยง',
+          isSupervisingDaily: true
         },
         adherence: evalDotsTaken ? 'รับประทานยาทุกวัน สม่ำเสมอ 100%' : 'ลืมกินยา 1-2 วัน/สัปดาห์',
-        pillCountStatus: 'จำนวนเม็ดยาคงเหลือถูกต้องตรงรอบ',
-        missedDosesLast2Weeks: evalDotsTaken ? 0 : 2,
+        pillCountStatus: evalDotsTaken ? 'จำนวนเม็ดยาคงเหลือถูกต้องตรงรอบ' : 'ยาเหลือเกินรอบ (กินไม่ครบ)',
+        missedDosesLast2Weeks: evalDotsTaken ? 0 : 1,
         sideEffects: {
           nauseaVomiting: false,
           orangeUrineAcknowledged: true,
@@ -385,7 +416,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
           ventilation: 'ดีมาก (โปร่ง แดดส่อง ลมถ่ายเทดี)',
           bedroomType: 'แยกห้องนอนเดี่ยว',
           sunlightExposure: 'แดดส่องถึงห้องพัก',
-          sputumDisposalMethod: 'กระโถน/ถุงทิ้งมิดชิดผสมน้ำยาฆ่าเชื้อ',
+          sputumDisposalMethod: 'กระดาษทิชชู่ใส่ถุงเผาทำลาย',
           maskWearingCompliance: 'สวมหน้ากากสม่ำเสมอเมื่อมีคนอยู่ใกล้'
         },
         psychosocial: {
@@ -395,13 +426,9 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
           stressAnxietyLevel: 'ปกติ'
         },
         sputumFollowUpDone: false,
-        identifiedProblems: [
-          ...(evalDotsTaken ? [] : ['กินยาไม่สม่ำเสมอ']),
-          ...(evalNoJaundice ? [] : ['มีอาการตาเหลือง/สงสัยตับอักเสบ']),
-          ...(evalNoRash ? [] : ['มีผื่นคันจากยา'])
-        ],
+        identifiedProblems: evalNoJaundice ? [] : ['มีอาการตาเหลือง/สงสัยตับอักเสบ'],
         interventionsProvided: [
-          'ตรวจประเมินอาการและติดตามการกินยาผ่านระบบ Telehealth Video Call',
+          'ตรวจประเมินอาการและติดตามการกินยาผ่านระบบ Telehealth Video Call หลายฝ่าย',
           'ให้คำแนะนำการปฏิบัติตัวและสังเกตอาการผิดปกติ'
         ],
         evaluatedSymptoms: {
@@ -450,6 +477,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
   };
 
   const patientLink = getPatientCallUrl(callId);
+  const totalInCall = remoteStreams.length + 1;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 font-['Prompt',sans-serif] overflow-y-auto">
@@ -464,24 +492,28 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-base font-bold text-white">
-                  ระบบพบแพทย์ออนไลน์ &bull; คุณ{patient.prefix}{patient.firstName} {patient.lastName}
+                  ประชุมสายวิดีโอคอล &bull; คุณ{patient.prefix}{patient.firstName} {patient.lastName}
                 </h1>
                 <span className="font-mono text-xs bg-emerald-950 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-bold">
                   HN: {patient.hn}
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                ตำบล{patient.subdistrict} ({patient.village}) &bull; สูตรยา: <span className="text-amber-300 font-bold">{patient.regimen || '2HRZE/4HR'}</span> &bull; ผู้โทร: {currentUser.fullName}
+                ตำบล{patient.subdistrict} ({patient.village}) &bull; สูตรยา: <span className="text-amber-300 font-bold">{patient.regimen || '2HRZE/4HR'}</span> &bull; ผู้เปิดห้อง: {currentUser.fullName}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {callSession?.status === 'connected' ? (
-              <div className="flex items-center gap-2 bg-emerald-950/80 border border-emerald-500/50 px-3 py-1.5 rounded-full text-xs font-mono font-bold text-emerald-300">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span>กำลังสนทนา ({formatTimer(callDuration)})</span>
-              </div>
+            {remoteStreams.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setShowParticipantsList(!showParticipantsList)}
+                className="flex items-center gap-2 bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-500/50 px-3 py-1.5 rounded-full text-xs font-mono font-bold text-emerald-300 transition"
+              >
+                <Users className="w-3.5 h-3.5 text-emerald-400" />
+                <span>ในสาย {totalInCall} คน ({formatTimer(callDuration)})</span>
+              </button>
             ) : callSession?.status === 'ended' ? (
               <div className="bg-slate-800 border border-slate-600 px-3 py-1.5 rounded-full text-xs font-bold text-slate-300">
                 สนทนาเสร็จสิ้น
@@ -489,7 +521,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
             ) : (
               <div className="flex items-center gap-2 bg-amber-950/80 border border-amber-500/50 px-3 py-1.5 rounded-full text-xs font-bold text-amber-300 animate-pulse">
                 <PhoneCall className="w-3.5 h-3.5" />
-                <span>รอคนไข้กดรับสาย...</span>
+                <span>รอผู้ร่วมสายเข้าห้อง...</span>
               </div>
             )}
 
@@ -502,18 +534,18 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
           </div>
         </div>
 
-        {/* Share Link Banner for Patient */}
+        {/* Share Link Banner for Multi-Party Participants */}
         <div className="px-4 py-2.5 bg-gradient-to-r from-emerald-950/80 via-slate-800 to-teal-950/80 border-b border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 truncate max-w-md">
             <span className="text-emerald-400 font-bold flex items-center gap-1 shrink-0">
               <Share2 className="w-3.5 h-3.5" />
-              <span>ลิงก์ให้คนไข้กดรับสาย:</span>
+              <span>ลิงก์เข้าสาย (ส่งให้คนไข้/ญาติ/อสม.):</span>
             </span>
             <input
               type="text"
               readOnly
               value={patientLink}
-              className="bg-black/40 text-slate-300 font-mono text-[11px] px-2.5 py-1 rounded-lg border border-slate-700 truncate w-60 sm:w-80 select-all"
+              className="bg-black/40 text-slate-300 font-mono text-[11px] px-2.5 py-1 rounded-lg border border-slate-700 truncate w-56 sm:w-72 select-all"
             />
           </div>
 
@@ -535,7 +567,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                 onClick={handleSendViaLine}
                 className="px-3 py-1.5 bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition shadow-sm"
               >
-                <span>ส่งผ่าน LINE Notify</span>
+                <span>ส่ง LINE นัดหมาย</span>
               </button>
             )}
 
@@ -570,9 +602,9 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
               />
             </div>
             <div className="space-y-2 text-xs max-w-sm">
-              <h3 className="font-bold text-white text-sm">สแกน QR Code เพื่อรับสายวิดีโอคอล</h3>
+              <h3 className="font-bold text-white text-sm">สแกน QR Code เพื่อเข้าสายวิดีโอคอล</h3>
               <p className="text-slate-300 leading-relaxed">
-                ให้คนไข้หรือญาติใช้กล้องโทรศัพท์มือถือ หรือแอปพลิเคชัน LINE สแกน QR Code นี้เพื่อเปิดหน้าต่างรับสายคุยกับแพทย์ได้ทันที
+                ให้คนไข้ ญาติ หรือ อสม. พี่เลี้ยง ใช้กล้องโทรศัพท์มือถือ หรือ LINE สแกน QR Code นี้เพื่อเข้าห้องสนทนาพร้อมกันได้หลายคนทันที
               </p>
               <button
                 onClick={() => setShowQrCode(false)}
@@ -590,25 +622,26 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
           {/* Left: Video Streaming Viewport */}
           <div className="flex-1 bg-black flex flex-col items-center justify-center relative overflow-hidden">
             
-            {/* Remote Video of Patient */}
-            <div className="w-full h-full flex items-center justify-center relative">
-              <video
-                ref={remoteVideoRef}
-                autoPlay
-                playsInline
-                className="w-full h-full object-cover sm:object-contain"
+            {/* Dynamic Multi-Peer Video Grid */}
+            <div className="w-full h-full relative">
+              <VideoConferenceGrid
+                localStream={localStream}
+                localParticipant={localParticipant}
+                remoteStreams={remoteStreams}
+                isLocalMuted={isMuted}
+                isLocalVideoOff={isVideoOff}
               />
 
-              {/* Waiting patient placeholder overlay */}
-              {(!callSession || callSession.status !== 'connected') && (
-                <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-6 text-center space-y-4">
+              {/* Waiting overlay if 0 remote participants */}
+              {remoteStreams.length === 0 && (
+                <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center space-y-4 pointer-events-auto">
                   <div className="w-20 h-20 bg-emerald-950/60 rounded-full border-2 border-emerald-500/40 flex items-center justify-center text-emerald-400 animate-pulse">
                     <PhoneCall className="w-10 h-10" />
                   </div>
                   <div className="space-y-1">
-                    <h3 className="text-base font-bold text-white">กำลังรอคุณ{patient.firstName}กดรับสายผ่านลิงก์...</h3>
+                    <h3 className="text-base font-bold text-white">กำลังรอผู้ป่วย / ญาติ / อสม. กดเข้าสายผ่านลิงก์...</h3>
                     <p className="text-xs text-slate-400 max-w-sm">
-                      กรุณาส่งลิงก์หรือ QR Code ด้านบนให้แก่คนไข้ เมื่อคนไข้กดรับสาย วิดีโอและเสียงจะเชื่อมต่ออัตโนมัติ
+                      ระบบรองรับการเข้าสายพร้อมกันหลายคน (Multi-party) เพียงส่งลิงก์ด้านบน ทุกคนสามารถกดเข้าคุยได้ทันทีโดยไม่ต้องล็อกอิน
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -617,31 +650,11 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                       className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center gap-1.5 shadow-lg"
                     >
                       <Copy className="w-4 h-4" />
-                      <span>คัดลอกลิงก์ส่งให้คนไข้</span>
+                      <span>คัดลอกลิงก์ส่งให้ผู้ร่วมสาย</span>
                     </button>
                   </div>
                 </div>
               )}
-
-              {/* Doctor PiP Local Camera */}
-              <div className="absolute top-4 right-4 z-20 w-32 h-44 sm:w-40 sm:h-52 rounded-2xl overflow-hidden shadow-2xl border-2 border-slate-700 bg-slate-900">
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover scale-x-[-1]"
-                />
-                {isVideoOff && (
-                  <div className="absolute inset-0 bg-slate-900 flex flex-col items-center justify-center text-slate-400">
-                    <VideoOff className="w-6 h-6 mb-1" />
-                    <span className="text-[9px]">ปิดกล้องอยู่</span>
-                  </div>
-                )}
-                <div className="absolute bottom-1.5 left-1.5 bg-black/70 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] text-white">
-                  กล้องคุณหมอ
-                </div>
-              </div>
 
               {/* Chat Overlay Drawer */}
               {showChat && (
@@ -667,14 +680,14 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                       callSession.messages.map((m) => (
                         <div
                           key={m.id}
-                          className={`flex flex-col ${m.sender === 'doctor' ? 'items-end' : 'items-start'}`}
+                          className={`flex flex-col ${m.sender === 'doctor' || m.sender === 'nurse' ? 'items-end' : 'items-start'}`}
                         >
                           <span className="text-[10px] text-slate-400 mb-0.5">
                             {m.senderName} ({m.timestamp})
                           </span>
                           <div
                             className={`p-2.5 rounded-2xl text-xs max-w-[85%] leading-relaxed ${
-                              m.sender === 'doctor'
+                              m.sender === 'doctor' || m.sender === 'nurse'
                                 ? 'bg-emerald-600 text-white rounded-tr-none'
                                 : 'bg-slate-800 text-white rounded-tl-none border border-slate-700'
                             }`}
@@ -690,7 +703,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                       type="text"
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
-                      placeholder="พิมพ์ข้อความถึงคนไข้..."
+                      placeholder="พิมพ์ข้อความถึงทุกคนในห้อง..."
                       className="flex-1 bg-slate-800 border border-slate-700 text-white text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-emerald-500"
                     />
                     <button
@@ -700,6 +713,59 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                       <Send className="w-4 h-4" />
                     </button>
                   </form>
+                </div>
+              )}
+
+              {/* Participants List Drawer */}
+              {showParticipantsList && (
+                <div className="absolute inset-y-0 left-0 z-30 w-72 bg-slate-900/95 backdrop-blur-xl border-r border-slate-700 flex flex-col shadow-2xl animate-fade-in">
+                  <div className="p-3 border-b border-slate-700 flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-emerald-400" />
+                      <span>ผู้เข้าร่วมสาย ({totalInCall} คน)</span>
+                    </span>
+                    <button
+                      onClick={() => setShowParticipantsList(false)}
+                      className="text-xs text-slate-400 hover:text-white"
+                    >
+                      ปิด
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                    {/* Doctor (Self) */}
+                    <div className="p-2.5 bg-slate-800/80 rounded-xl border border-slate-700 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white text-xs font-bold">
+                          หมอ
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-white">{currentUser.fullName}</div>
+                          <div className="text-[10px] text-emerald-400">{localParticipant.roleTitle} (ตัวท่าน)</div>
+                        </div>
+                      </div>
+                      <div className="text-emerald-400 text-xs">
+                        {isMuted ? <MicOff className="w-3.5 h-3.5 text-red-400" /> : <Mic className="w-3.5 h-3.5" />}
+                      </div>
+                    </div>
+
+                    {/* Remote Participants */}
+                    {remoteStreams.map((r) => (
+                      <div key={r.peerId} className="p-2.5 bg-slate-800/80 rounded-xl border border-slate-700 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center text-white text-xs font-bold">
+                            {r.participant?.role === 'vdot' ? 'อสม' : r.participant?.role === 'relative' ? 'ญาติ' : 'คนไข้'}
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-white">{r.participant?.name || 'ผู้ร่วมสาย'}</div>
+                            <div className="text-[10px] text-teal-400">{r.participant?.roleTitle || 'ผู้รับบริการ'}</div>
+                          </div>
+                        </div>
+                        <div className="text-slate-400 text-xs">
+                          {r.isMuted ? <MicOff className="w-3.5 h-3.5 text-red-400" /> : <Mic className="w-3.5 h-3.5 text-emerald-400" />}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -744,7 +810,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                 <Monitor className="w-5 h-5" />
               </button>
 
-              {/* Snapshot Photo of Patient */}
+              {/* Snapshot Photo */}
               <button
                 type="button"
                 onClick={handleCaptureSnapshot}
@@ -752,6 +818,18 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                 title="บันทึกภาพถ่ายคนไข้/เม็ดยา"
               >
                 <Camera className="w-5 h-5" />
+              </button>
+
+              {/* Participants list toggle */}
+              <button
+                type="button"
+                onClick={() => setShowParticipantsList(!showParticipantsList)}
+                className={`w-11 h-11 rounded-full flex items-center justify-center transition shadow-md ${
+                  showParticipantsList ? 'bg-teal-600 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white border border-slate-700'
+                }`}
+                title="รายชื่อผู้ร่วมสาย"
+              >
+                <Users className="w-5 h-5" />
               </button>
 
               {/* Chat Toggle */}

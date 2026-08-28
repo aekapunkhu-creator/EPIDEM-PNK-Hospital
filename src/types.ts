@@ -549,9 +549,30 @@ export interface HomeVisitRecord {
 // ระบบวิดีโอคอลปรึกษาแพทย์และติดตามการรักษา (Telehealth Video Call System)
 export type CallStatus = 'waiting' | 'ringing' | 'connected' | 'ended' | 'rejected' | 'missed';
 
+export interface CallParticipant {
+  peerId: string;
+  name: string;
+  role: 'doctor' | 'patient' | 'nurse' | 'vdot' | 'relative' | 'staff' | string;
+  roleTitle?: string; // e.g. "แพทย์", "พยาบาล", "ผู้ป่วย (คนไข้)", "อสม. พี่เลี้ยง", "ญาติ/ผู้ดูแล"
+  joinedAt: string;
+  isMuted?: boolean;
+  isVideoOff?: boolean;
+  isScreenSharing?: boolean;
+  avatarColor?: string;
+}
+
+export interface MultiPeerSignal {
+  id?: string;
+  fromPeerId: string;
+  toPeerId: string;
+  type: 'offer' | 'answer' | 'ice-candidate' | 'leave';
+  data: any;
+  createdAt: number;
+}
+
 export interface CallChatMessage {
   id: string;
-  sender: 'doctor' | 'patient';
+  sender: 'doctor' | 'patient' | 'nurse' | 'vdot' | 'relative' | 'staff' | string;
   senderName: string;
   text: string;
   timestamp: string;
@@ -585,6 +606,8 @@ export interface VideoCallSession {
     weight?: number;
   };
   messages?: CallChatMessage[];
+  participants?: Record<string, CallParticipant>;
+  activeParticipants?: CallParticipant[];
   
   // WebRTC Signaling fields
   offer?: {
