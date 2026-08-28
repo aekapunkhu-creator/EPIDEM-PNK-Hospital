@@ -8,7 +8,8 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
-  writeBatch
+  writeBatch,
+  arrayUnion
 } from 'firebase/firestore';
 import {
   getDatabase,
@@ -581,19 +582,17 @@ export async function addCallIceCandidate(
   candidate: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null }
 ) {
   try {
+    if (!candidate || !candidate.candidate) return;
     const docRef = doc(db, 'calls', callId);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const data = snap.data() as VideoCallSession;
-      const key = role === 'caller' ? 'callerIceCandidates' : 'calleeIceCandidates';
-      const existing = data[key] || [];
-      // avoid duplicates
-      if (!existing.some(c => c.candidate === candidate.candidate)) {
-        await setDoc(docRef, {
-          [key]: [...existing, candidate]
-        }, { merge: true });
-      }
-    }
+    const key = role === 'caller' ? 'callerIceCandidates' : 'calleeIceCandidates';
+    await setDoc(docRef, {
+      [key]: arrayUnion(candidate)
+    }, { merge: true });
+
+    try {
+      const sanitizedKey = candidate.candidate.replace(/[.#$/[\]]/g, '_').substring(0, 40);
+      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/${key}/${sanitizedKey}`), candidate);
+    } catch (rtdbErr) {}
   } catch (e) {
     console.error('Error adding ICE candidate', e);
   }
@@ -602,14 +601,13 @@ export async function addCallIceCandidate(
 export async function addCallMessage(callId: string, message: CallChatMessage) {
   try {
     const docRef = doc(db, 'calls', callId);
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const data = snap.data() as VideoCallSession;
-      const existing = data.messages || [];
-      await setDoc(docRef, {
-        messages: [...existing, message]
-      }, { merge: true });
-    }
+    await setDoc(docRef, {
+      messages: arrayUnion(message)
+    }, { merge: true });
+
+    try {
+      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/messages/${message.id}`), message);
+    } catch (rtdbErr) {}
   } catch (e) {
     console.error('Error adding call message', e);
   }

@@ -1,22 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { 
   VideoCallSession, 
-  CallChatMessage, 
-  Patient 
+  CallChatMessage 
 } from '../types';
 import { 
   subscribeCallById, 
+  saveCallSessionToFirestore,
   updateCallStatus, 
-  addCallMessage,
-  fetchPatientByIdFromFirestore 
+  addCallMessage 
 } from '../services/firebaseStore';
 import { WebRTCConnection } from '../services/webrtcService';
 import { callAudio } from '../utils/callAudio';
 import { 
   Phone, PhoneOff, Mic, MicOff, Video as VideoIcon, VideoOff, 
   SwitchCamera, MessageSquare, Send, HeartPulse, Building2, 
-  ShieldCheck, AlertCircle, Sparkles, CheckCircle2, RefreshCw,
-  PhoneCall, Users, Clock, Volume2
+  ShieldCheck, AlertCircle, CheckCircle2,
+  Users, Volume2
 } from 'lucide-react';
 
 interface PatientVideoCallViewProps {
@@ -29,10 +28,11 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
   onExit
 }) => {
   const [callSession, setCallSession] = useState<VideoCallSession | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
   const [hasStartedMedia, setHasStartedMedia] = useState<boolean>(false);
+  const [isAttemptingMedia, setIsAttemptingMedia] = useState<boolean>(false);
   const [connectionState, setConnectionState] = useState<string>('connecting');
   const [callDuration, setCallDuration] = useState<number>(0);
+  const [audioUnlocked, setAudioUnlocked] = useState<boolean>(false);
   
   // Media Controls
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -40,7 +40,6 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [showChat, setShowChat] = useState<boolean>(false);
   const [chatMessage, setChatMessage] = useState<string>('');
-  const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
   const [mediaError, setMediaError] = useState<string | null>(null);
 
   // References
@@ -48,22 +47,14 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const webrtcRef = useRef<WebRTCConnection | null>(null);
   const timerRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // 1. Subscribe to Call Session
+  // Initialize or Auto-create Call Session & Auto-start Media
   useEffect(() => {
-    setLoading(true);
-    const unsub = subscribeCallById(callId, (session) => {
-      setLoading(false);
-      setCallSession(session);
-
+    // 1. Subscribe to Firestore Call
+    const unsub = subscribeCallById(callId, async (session) => {
       if (session) {
-        // Manage ringtone on patient side if call is waiting/ringing and patient hasn't joined
-        if (session.status === 'ringing' || session.status === 'waiting') {
-          callAudio.playIncomingRingtone();
-        } else {
-          callAudio.stopIncomingRingtone();
-        }
-
+        setCallSession(session);
         if (session.status === 'ended' || session.status === 'rejected') {
           callAudio.stopIncomingRingtone();
           callAudio.playEndedSound();
@@ -71,8 +62,28 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
             webrtcRef.current.close();
           }
         }
+      } else {
+        // If no call doc exists yet in Firestore, auto-create it so user never gets "not found"
+        const defaultSession: VideoCallSession = {
+          id: callId,
+          patientId: callId,
+          patientName: 'ผู้รับบริการ (คนไข้)',
+          patientHN: callId.startsWith('CALL-') ? 'ทั่วไป' : callId,
+          callerId: 'doctor-staff',
+          callerName: 'แพทย์/พยาบาล รพ.โพนนาแก้ว',
+          callerRole: 'ทีมแพทย์ รพ.โพนนาแก้ว',
+          hospitalName: 'โรงพยาบาลโพนนาแก้ว',
+          status: 'waiting',
+          createdAt: new Date().toISOString(),
+          reason: 'ปรึกษาแพทย์ทางไกล & ติดตามการรักษา TB-Care'
+        };
+        setCallSession(defaultSession);
+        await saveCallSessionToFirestore(defaultSession);
       }
     });
+
+    // 2. Auto-start camera and join room immediately
+    startPatientMediaAndJoin();
 
     return () => {
       unsub();
@@ -86,13 +97,69 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
     };
   }, [callId]);
 
-  // 2. Call Timer
+  // Unlock Audio on user touch / click
+  const handleUserInteraction = () => {
+    if (!audioUnlocked) {
+      setAudioUnlocked(true);
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.play().catch(() => {});
+      }
+    }
+  };
+
+  // Auto-start Patient Media and Peer connection
+  const startPatientMediaAndJoin = async () => {
+    if (isAttemptingMedia) return;
+    setIsAttemptingMedia(true);
+    setMediaError(null);
+
+    try {
+      if (!webrtcRef.current) {
+        const webrtc = new WebRTCConnection(callId, 'callee');
+        webrtcRef.current = webrtc;
+
+        // Remote stream listener
+        webrtc.onRemoteStream((remoteStream) => {
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = remoteStream;
+            remoteVideoRef.current.play().catch((e) => {
+              console.log('Autoplay handled, will play on tap:', e);
+            });
+          }
+        });
+
+        // Connection State listener
+        webrtc.onConnectionStateChange((state) => {
+          setConnectionState(state);
+          if (state === 'connected') {
+            callAudio.stopIncomingRingtone();
+            callAudio.playConnectedSound();
+          }
+        });
+      }
+
+      // Start local camera/mic
+      const stream = await webrtcRef.current.startLocalMedia(true, true, facingMode);
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+        localVideoRef.current.play().catch(() => {});
+      }
+      setHasStartedMedia(true);
+
+      // Start answering / listening for doctor
+      await webrtcRef.current.answerCall();
+    } catch (err: any) {
+      console.warn('Auto-start media failed, waiting for user click:', err);
+      setMediaError('กรุณากดปุ่ม "เปิดกล้องและไมค์" เพื่อเริ่มการสนทนากับแพทย์');
+    } finally {
+      setIsAttemptingMedia(false);
+    }
+  };
+
+  // Call Timer
   useEffect(() => {
-    if (callSession?.status === 'connected') {
-      callAudio.stopIncomingRingtone();
-      callAudio.playConnectedSound();
-      
-      const startTime = callSession.startedAt ? new Date(callSession.startedAt).getTime() : Date.now();
+    if (callSession?.status === 'connected' || connectionState === 'connected') {
+      const startTime = callSession?.startedAt ? new Date(callSession.startedAt).getTime() : Date.now();
       timerRef.current = setInterval(() => {
         const secs = Math.floor((Date.now() - startTime) / 1000);
         setCallDuration(Math.max(0, secs));
@@ -104,43 +171,7 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [callSession?.status]);
-
-  // Handle Patient Answers the Video Call
-  const handleAnswerCall = async () => {
-    callAudio.stopIncomingRingtone();
-    setMediaError(null);
-
-    try {
-      const webrtc = new WebRTCConnection(callId, 'callee');
-      webrtcRef.current = webrtc;
-
-      // 1. Start Patient's Local Camera & Mic
-      const stream = await webrtc.startLocalMedia(true, true, facingMode);
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-      setHasStartedMedia(true);
-
-      // 2. Listen for Doctor's remote stream
-      webrtc.onRemoteStream((remoteStream) => {
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = remoteStream;
-          remoteVideoRef.current.play().catch(() => {});
-        }
-      });
-
-      webrtc.onConnectionStateChange((state) => {
-        setConnectionState(state);
-      });
-
-      // 3. Connect WebRTC Answer
-      await webrtc.answerCall();
-    } catch (err: any) {
-      console.error('Error starting patient video call:', err);
-      setMediaError('ไม่สามารถเข้าถึงกล้องหรือไมโครโฟนได้ โปรดอนุญาตให้เบราว์เซอร์ใช้งานกล้องและไมโครโฟน');
-    }
-  };
+  }, [callSession?.status, connectionState]);
 
   // Toggle Mute
   const handleToggleMute = () => {
@@ -172,15 +203,15 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
     }
   };
 
-  // Send In-Call Message
+  // Send Chat Message
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatMessage.trim() || !callSession) return;
+    if (!chatMessage.trim()) return;
 
     const newMsg: CallChatMessage = {
       id: `msg-${Date.now()}`,
       sender: 'patient',
-      senderName: callSession.patientName || 'ผู้ป่วย',
+      senderName: callSession?.patientName || 'คนไข้',
       text: chatMessage.trim(),
       timestamp: new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
     };
@@ -202,146 +233,14 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
     });
   };
 
-  // Reject Call
-  const handleRejectCall = async () => {
-    callAudio.stopIncomingRingtone();
-    await updateCallStatus(callId, 'rejected');
-  };
-
   const formatTimer = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-4 font-['Prompt',sans-serif]">
-        <div className="w-14 h-14 border-4 border-emerald-400 border-t-transparent rounded-full animate-spin mb-4" />
-        <p className="text-sm font-semibold text-slate-300">กำลังเชื่อมต่อระบบพบแพทย์ออนไลน์ รพ.โพนนาแก้ว...</p>
-      </div>
-    );
-  }
-
-  if (!callSession) {
-    return (
-      <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center p-4 font-['Prompt',sans-serif]">
-        <div className="bg-white text-slate-900 rounded-3xl max-w-md w-full p-6 text-center space-y-4 shadow-2xl border border-slate-200">
-          <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto">
-            <AlertCircle className="w-8 h-8" />
-          </div>
-          <h2 className="text-lg font-bold text-slate-900">ไม่พบห้องวิดีโอคอลนี้</h2>
-          <p className="text-xs text-slate-600 leading-relaxed">
-            ลิงก์ห้องสนทนานี้อาจหมดอายุ หรือถูกยกเลิกแล้ว หากต้องการพบแพทย์กรุณาติดต่อ โรงพยาบาลโพนนาแก้ว โทร. <span className="font-bold text-slate-900">042-759045</span>
-          </p>
-          {onExit && (
-            <button
-              onClick={onExit}
-              className="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs transition"
-            >
-              กลับหน้าหลัก
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // 1. Incoming Call / Pre-join Waiting Screen
-  if (callSession.status === 'waiting' || callSession.status === 'ringing') {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-teal-950 text-white flex flex-col items-center justify-between p-6 sm:p-8 font-['Prompt',sans-serif]">
-        
-        {/* Top Header */}
-        <div className="text-center space-y-1.5 pt-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 backdrop-blur-md text-emerald-300 text-xs font-bold border border-white/10">
-            <Building2 className="w-3.5 h-3.5" />
-            <span>โรงพยาบาลโพนนาแก้ว จ.สกลนคร</span>
-          </div>
-          <h1 className="text-lg font-bold text-white tracking-wide">
-            ระบบวิดีโอคอลพบแพทย์ทางไกล (Telemedicine)
-          </h1>
-        </div>
-
-        {/* Center Caller & Patient Card */}
-        <div className="w-full max-w-sm bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 text-center space-y-5 shadow-2xl animate-fade-in">
-          
-          {/* Animated Avatar / Ringing Indicator */}
-          <div className="relative mx-auto w-24 h-24 flex items-center justify-center">
-            <div className="absolute inset-0 bg-emerald-500 rounded-full animate-ping opacity-25" />
-            <div className="absolute inset-2 bg-emerald-400 rounded-full animate-pulse opacity-40" />
-            <div className="relative w-20 h-20 bg-gradient-to-tr from-emerald-600 to-teal-400 rounded-full flex items-center justify-center text-white shadow-xl border-2 border-white/40">
-              <PhoneCall className="w-10 h-10 animate-bounce" />
-            </div>
-          </div>
-
-          {/* Caller Details */}
-          <div className="space-y-1">
-            <span className="text-[11px] font-bold text-emerald-300 uppercase tracking-wider bg-emerald-950/60 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
-              {callSession.callerRole || 'แพทย์ประจำ รพ.โพนนาแก้ว'}
-            </span>
-            <h2 className="text-xl font-bold text-white pt-1">
-              {callSession.callerName || 'แพทย์/พยาบาล โรงพยาบาลโพนนาแก้ว'}
-            </h2>
-            <p className="text-xs text-slate-300">
-              {callSession.hospitalName || 'โรงพยาบาลโพนนาแก้ว'} กำลังโทรหาท่าน...
-            </p>
-          </div>
-
-          {/* Patient Info Box */}
-          <div className="bg-black/30 rounded-2xl p-3 border border-white/10 text-left text-xs space-y-1">
-            <div className="flex items-center justify-between text-slate-300">
-              <span>ผู้รับสาย (คนไข้):</span>
-              <span className="font-mono text-emerald-300 font-bold">HN: {callSession.patientHN}</span>
-            </div>
-            <p className="font-bold text-white text-sm">
-              คุณ{callSession.patientName}
-            </p>
-            {callSession.reason && (
-              <p className="text-[11px] text-emerald-200/90 pt-0.5 border-t border-white/10 mt-1">
-                วัตถุประสงค์: {callSession.reason}
-              </p>
-            )}
-          </div>
-
-          {mediaError && (
-            <div className="p-3 bg-red-500/20 border border-red-500/40 rounded-xl text-xs text-red-200 flex items-center gap-2 text-left">
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-              <span>{mediaError}</span>
-            </div>
-          )}
-
-          {/* Accept / Decline Action Buttons */}
-          <div className="grid grid-cols-2 gap-3 pt-2">
-            <button
-              onClick={handleRejectCall}
-              className="py-3.5 px-4 bg-red-600/90 hover:bg-red-700 active:bg-red-800 text-white font-bold text-xs rounded-2xl shadow-lg transition flex items-center justify-center gap-2"
-            >
-              <PhoneOff className="w-4 h-4" />
-              <span>ไม่สะดวกคุย</span>
-            </button>
-
-            <button
-              onClick={handleAnswerCall}
-              className="py-3.5 px-4 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 active:scale-95 text-white font-bold text-sm rounded-2xl shadow-xl shadow-emerald-900/50 transition flex items-center justify-center gap-2 border border-emerald-300/40"
-            >
-              <Phone className="w-4 h-4 animate-pulse" />
-              <span>กดรับสายหมอ</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Footer Guidance */}
-        <div className="text-center text-[11px] text-slate-400 max-w-xs space-y-1">
-          <p>🔔 เมื่อกดรับสาย โปรดอนุญาตให้เบราว์เซอร์เปิดกล้องและไมโครโฟนเพื่อสนทนากับแพทย์</p>
-        </div>
-
-      </div>
-    );
-  }
-
-  // 2. Call Ended Screen
-  if (callSession.status === 'ended' || callSession.status === 'rejected') {
+  // 1. Call Ended Screen
+  if (callSession?.status === 'ended' || callSession?.status === 'rejected') {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-4 font-['Prompt',sans-serif]">
         <div className="bg-white text-slate-900 rounded-3xl max-w-md w-full p-6 sm:p-8 text-center space-y-5 shadow-2xl border border-slate-200 animate-fade-in">
@@ -362,8 +261,8 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
             )}
           </div>
 
-          {/* Doctor's Advice Box if present */}
-          {callSession.prescriptionsOrAdvice && (
+          {/* Doctor Advice if present */}
+          {callSession?.prescriptionsOrAdvice && (
             <div className="p-4 bg-teal-50 rounded-2xl border border-teal-200 text-left text-xs text-teal-950 space-y-1">
               <div className="font-bold flex items-center gap-1.5 text-teal-900">
                 <HeartPulse className="w-4 h-4 text-teal-600" />
@@ -375,7 +274,7 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
             </div>
           )}
 
-          {/* Health reminder banner */}
+          {/* Health reminder */}
           <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 text-left text-xs text-slate-700 space-y-2">
             <div className="font-bold text-slate-900 flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
@@ -406,40 +305,59 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
     );
   }
 
-  // 3. Active In-Call Video Room View
+  const isConnected = connectionState === 'connected' || callSession?.status === 'connected';
+
+  // 2. Direct Live Video Room View
   return (
-    <div className="fixed inset-0 z-50 bg-black text-white flex flex-col font-['Prompt',sans-serif] overflow-hidden select-none">
+    <div 
+      ref={containerRef}
+      onClick={handleUserInteraction}
+      onTouchStart={handleUserInteraction}
+      className="fixed inset-0 z-50 bg-black text-white flex flex-col font-['Prompt',sans-serif] overflow-hidden select-none"
+    >
       
       {/* Top Overlay Bar */}
-      <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-black/80 via-black/40 to-transparent p-4 flex items-center justify-between text-white">
+      <div className="absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-black/85 via-black/40 to-transparent p-4 flex items-center justify-between text-white pointer-events-auto">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-emerald-600/80 backdrop-blur-md flex items-center justify-center text-white font-bold shadow-md border border-white/20">
+          <div className="w-10 h-10 rounded-2xl bg-emerald-600/90 backdrop-blur-md flex items-center justify-center text-white font-bold shadow-md border border-white/20">
             <HeartPulse className="w-5 h-5" />
           </div>
           <div>
-            <h2 className="text-sm font-bold leading-tight flex items-center gap-1.5">
-              <span>{callSession.callerName || 'แพทย์ รพ.โพนนาแก้ว'}</span>
-              <span className="text-[10px] bg-emerald-500/30 text-emerald-300 px-2 py-0.5 rounded-full font-normal">
-                {callSession.callerRole || 'แพทย์'}
+            <h2 className="text-sm font-bold leading-tight flex items-center gap-2">
+              <span>{callSession?.callerName || 'แพทย์/พยาบาล รพ.โพนนาแก้ว'}</span>
+              <span className="text-[10px] bg-emerald-500/30 text-emerald-300 px-2 py-0.5 rounded-full font-normal border border-emerald-400/20">
+                {callSession?.callerRole || 'แพทย์'}
               </span>
             </h2>
-            <p className="text-[11px] text-slate-300">
-              โรงพยาบาลโพนนาแก้ว &bull; HN: {callSession.patientHN}
+            <p className="text-[11px] text-slate-300 flex items-center gap-2">
+              <span>โรงพยาบาลโพนนาแก้ว</span>
+              {callSession?.patientHN && callSession.patientHN !== 'ทั่วไป' && (
+                <span>&bull; HN: {callSession.patientHN}</span>
+              )}
             </p>
           </div>
         </div>
 
-        {/* Timer & Quality indicator */}
+        {/* Live status badge & Timer */}
         <div className="flex items-center gap-2">
-          <div className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/20 flex items-center gap-2 text-xs font-mono font-bold text-emerald-400">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>{formatTimer(callDuration)}</span>
-          </div>
+          {isConnected ? (
+            <div className="bg-emerald-950/80 border border-emerald-500/40 px-3 py-1.5 rounded-full flex items-center gap-2 text-xs font-mono font-bold text-emerald-300">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>{formatTimer(callDuration)}</span>
+            </div>
+          ) : (
+            <div className="bg-amber-950/80 border border-amber-500/40 px-3 py-1.5 rounded-full flex items-center gap-2 text-xs text-amber-300">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span className="text-[11px] font-semibold">กำลังรอแพทย์...</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Main Video Viewport (Remote Doctor Stream) */}
+      {/* Main Remote Video Viewport */}
       <div className="relative flex-1 bg-slate-950 flex items-center justify-center overflow-hidden">
+        
+        {/* Remote Doctor Video */}
         <video
           ref={remoteVideoRef}
           autoPlay
@@ -447,16 +365,26 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
           className="w-full h-full object-cover sm:object-contain"
         />
 
-        {/* Doctor Audio/Video placeholder if remote stream not yet rendering */}
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/90 text-slate-400 pointer-events-none -z-10">
-          <div className="w-20 h-20 rounded-full bg-slate-800 flex items-center justify-center mb-3">
-            <Users className="w-10 h-10 text-slate-500" />
+        {/* Placeholder if doctor video is not yet streaming */}
+        {!isConnected && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-800 to-teal-950 text-slate-300 p-6 text-center">
+            <div className="w-20 h-20 rounded-full bg-white/10 border border-white/20 flex items-center justify-center mb-4 shadow-xl">
+              <Users className="w-10 h-10 text-emerald-400 animate-pulse" />
+            </div>
+            <h3 className="text-base font-bold text-white mb-1">
+              ท่านเข้าสู่ห้องสนทนาเรียบร้อยแล้ว
+            </h3>
+            <p className="text-xs text-slate-300 max-w-xs leading-relaxed">
+              ระบบกำลังเชื่อมต่อสัญญาณกับแพทย์ เมื่อแพทย์เปิดกล้อง ภาพและเสียงจะปรากฏขึ้นอัตโนมัติ
+            </p>
+            <div className="mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs border border-emerald-500/30">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              <span>กล้องและไมค์ของท่านพร้อมสนทนาแล้ว</span>
+            </div>
           </div>
-          <p className="text-sm font-bold text-white">กำลังรอภาพจากแพทย์...</p>
-          <p className="text-xs text-slate-400">เมื่อแพทย์เปิดกล้อง ภาพจะปรากฏขึ้นอัตโนมัติ</p>
-        </div>
+        )}
 
-        {/* Floating Patient Self-View (Picture-in-Picture) */}
+        {/* Floating Self Camera View (Picture-in-Picture) */}
         <div className="absolute top-20 right-4 z-20 w-28 h-40 sm:w-36 sm:h-48 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/30 bg-slate-900">
           <video
             ref={localVideoRef}
@@ -471,12 +399,36 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
               <span className="text-[9px]">ปิดกล้องอยู่</span>
             </div>
           )}
-          <div className="absolute bottom-1.5 left-1.5 bg-black/60 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] text-white">
+          <div className="absolute bottom-1.5 left-1.5 bg-black/70 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] text-white">
             ตัวท่าน
           </div>
         </div>
 
-        {/* Slide-over Chat Box */}
+        {/* Permission / Click to Start Overlay if blocked by browser */}
+        {!hasStartedMedia && (
+          <div className="absolute inset-0 z-30 bg-black/80 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center">
+            <div className="max-w-sm w-full bg-white text-slate-900 rounded-3xl p-6 shadow-2xl space-y-4">
+              <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+                <VideoIcon className="w-8 h-8" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">วิดีโอคอลพบแพทย์ รพ.โพนนาแก้ว</h3>
+                <p className="text-xs text-slate-600">
+                  กดปุ่มด้านล่างเพื่อเปิดกล้องและไมโครโฟน เริ่มสนทนากับแพทย์ได้ทันที
+                </p>
+              </div>
+              <button
+                onClick={startPatientMediaAndJoin}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold text-sm shadow-xl transition active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Phone className="w-5 h-5 animate-bounce" />
+                <span>เปิดกล้อง & สนทนากับหมอทันที</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Chat slide-over */}
         {showChat && (
           <div className="absolute inset-y-0 right-0 z-30 w-full sm:w-80 bg-slate-900/95 backdrop-blur-xl border-l border-white/10 flex flex-col shadow-2xl animate-fade-in">
             <div className="p-3.5 border-b border-white/10 flex items-center justify-between">
@@ -493,7 +445,7 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
             </div>
 
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
-              {(!callSession.messages || callSession.messages.length === 0) ? (
+              {(!callSession?.messages || callSession.messages.length === 0) ? (
                 <div className="h-full flex items-center justify-center text-center text-xs text-slate-500 p-4">
                   สามารถพิมพ์ข้อความหรือคำถามส่งให้แพทย์ได้ที่นี่
                 </div>
@@ -541,7 +493,7 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
       </div>
 
       {/* Bottom Floating Call Control Bar */}
-      <div className="absolute bottom-6 inset-x-0 z-20 flex items-center justify-center px-4">
+      <div className="absolute bottom-6 inset-x-0 z-20 flex items-center justify-center px-4 pointer-events-auto">
         <div className="bg-slate-900/90 backdrop-blur-xl border border-white/20 p-2.5 sm:p-3 rounded-full flex items-center gap-2 sm:gap-4 shadow-2xl">
           
           {/* Mute Mic */}
@@ -572,7 +524,7 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
             {isVideoOff ? <VideoOff className="w-5 h-5" /> : <VideoIcon className="w-5 h-5" />}
           </button>
 
-          {/* Switch Camera Front/Back (For showing pills or rash) */}
+          {/* Switch Camera Front/Back */}
           <button
             type="button"
             onClick={handleSwitchCamera}
@@ -598,11 +550,11 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
           <button
             type="button"
             onClick={handleEndCall}
-            className="w-14 h-12 px-4 rounded-full bg-red-600 hover:bg-red-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xl transition active:scale-95"
+            className="h-12 px-5 rounded-full bg-red-600 hover:bg-red-700 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xl transition active:scale-95"
             title="วางสาย"
           >
             <PhoneOff className="w-5 h-5" />
-            <span className="hidden sm:inline">วางสาย</span>
+            <span>วางสาย</span>
           </button>
 
         </div>

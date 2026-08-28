@@ -379,7 +379,7 @@ export default function App() {
     return [];
   };
 
-  // Detect URL parameter for public patient video call link
+  // Detect URL parameter for public patient video call link (No login required)
   const getPublicVideoCallIdFromUrl = (): string | null => {
     if (typeof window === 'undefined') return null;
     try {
@@ -389,24 +389,37 @@ export default function App() {
       // 1. Direct query parameters
       const callParam = urlObj.searchParams.get('videoCall') || 
                         urlObj.searchParams.get('call') || 
+                        urlObj.searchParams.get('callId') || 
                         urlObj.searchParams.get('telehealth') || 
-                        urlObj.searchParams.get('room');
+                        urlObj.searchParams.get('room') ||
+                        urlObj.searchParams.get('vdo') ||
+                        urlObj.searchParams.get('vdocall') ||
+                        urlObj.searchParams.get('video') ||
+                        urlObj.searchParams.get('telemed') ||
+                        urlObj.searchParams.get('meet');
       if (callParam) return decodeURIComponent(callParam).trim();
 
-      // 2. Hash-based routing (#videoCall=CALL-123 or #/call/CALL-123)
+      // 2. Hash-based routing (#videoCall=CALL-123 or #/call/CALL-123 or #vdo=...)
       const hash = window.location.hash;
       if (hash) {
         const cleanHash = hash.replace(/^#\/?/, '');
-        const match = cleanHash.match(/(?:call|videoCall|telehealth)\/([^/?&#]+)/i);
+        const match = cleanHash.match(/(?:call|videoCall|telehealth|vdo|video|room)\/([^/?&#]+)/i);
         if (match && match[1]) return decodeURIComponent(match[1]).trim();
         const queryPart = cleanHash.includes('?') ? cleanHash.split('?')[1] : cleanHash;
         const hashParams = new URLSearchParams(queryPart);
-        const hashCall = hashParams.get('videoCall') || hashParams.get('call') || hashParams.get('telehealth') || hashParams.get('room');
+        const hashCall = hashParams.get('videoCall') || 
+                         hashParams.get('call') || 
+                         hashParams.get('callId') || 
+                         hashParams.get('telehealth') || 
+                         hashParams.get('room') ||
+                         hashParams.get('vdo') ||
+                         hashParams.get('vdocall') ||
+                         hashParams.get('video');
         if (hashCall) return decodeURIComponent(hashCall).trim();
       }
 
       // 3. Fallback regex
-      const regex = urlStr.match(/[?&#](?:videoCall|call|telehealth)=([^&#]+)/i);
+      const regex = urlStr.match(/[?&#](?:videoCall|call|callId|telehealth|vdo|vdocall|video|telemed)=([^&#]+)/i);
       if (regex && regex[1]) return decodeURIComponent(regex[1]).trim();
     } catch (err) {
       console.warn('Video call URL parse error:', err);
@@ -757,9 +770,15 @@ export default function App() {
             const url = new URL(window.location.href);
             url.searchParams.delete('videoCall');
             url.searchParams.delete('call');
+            url.searchParams.delete('callId');
             url.searchParams.delete('telehealth');
             url.searchParams.delete('room');
-            window.location.href = url.pathname;
+            url.searchParams.delete('vdo');
+            url.searchParams.delete('vdocall');
+            url.searchParams.delete('video');
+            url.searchParams.delete('telemed');
+            url.searchParams.delete('meet');
+            window.history.replaceState({}, '', url.pathname);
           }
         }}
       />

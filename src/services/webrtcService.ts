@@ -12,7 +12,9 @@ const RTC_CONFIG: RTCConfiguration = {
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' }
+    { urls: 'stun:stun4.l.google.com:19302' },
+    { urls: 'stun:stun.services.mozilla.com' },
+    { urls: 'stun:global.stun.twilio.com:3478' }
   ],
   iceCandidatePoolSize: 10
 };
@@ -27,6 +29,7 @@ export class WebRTCConnection {
   private onRemoteStreamCallback: ((stream: MediaStream) => void) | null = null;
   private onConnectionStateChangeCallback: ((state: RTCPeerConnectionState) => void) | null = null;
   private processedCandidates: Set<string> = new Set();
+  private pendingCandidates: RTCIceCandidateInit[] = [];
   private facingMode: 'user' | 'environment' = 'user';
   private isScreenSharing: boolean = false;
   private screenStream: MediaStream | null = null;
@@ -51,14 +54,36 @@ export class WebRTCConnection {
       
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       this.localStream = stream;
+      this.attachLocalTracksToPc();
       return stream;
     } catch (err: any) {
-      console.warn('getUserMedia high constraints failed, trying basic fallback:', err);
-      // Fallback with minimal constraints
-      const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      this.localStream = fallbackStream;
-      return fallbackStream;
+      console.warn('getUserMedia ideal constraints failed, trying standard fallback:', err);
+      try {
+        const fallbackStream = await navigator.mediaDevices.getUserMedia({ video: !!video, audio: !!audio });
+        this.localStream = fallbackStream;
+        this.attachLocalTracksToPc();
+        return fallbackStream;
+      } catch (err2: any) {
+        console.warn('getUserMedia standard failed, trying audio only fallback:', err2);
+        const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+        this.localStream = audioOnlyStream;
+        this.attachLocalTracksToPc();
+        return audioOnlyStream;
+      }
     }
+  }
+
+  private attachLocalTracksToPc() {
+    if (!this.pc || !this.localStream) return;
+    const currentSenders = this.pc.getSenders();
+    this.localStream.getTracks().forEach((track) => {
+      const alreadySending = currentSenders.some(s => s.track && s.track.id === track.id);
+      if (!alreadySending) {
+        try {
+          this.pc!.addTrack(track, this.localStream!);
+        } catch (e) {}
+      }
+    });
   }
 
   getLocalStream(): MediaStream | null {
@@ -92,17 +117,26 @@ export class WebRTCConnection {
     // Add local tracks to peer connection
     if (this.localStream) {
       this.localStream.getTracks().forEach((track) => {
-        pc.addTrack(track, this.localStream!);
+        try {
+          pc.addTrack(track, this.localStream!);
+        } catch (e) {}
       });
     }
 
     // Handle remote tracks
     pc.ontrack = (event) => {
-      event.streams[0].getTracks().forEach((track) => {
-        if (this.remoteStream && !this.remoteStream.getTracks().some(t => t.id === track.id)) {
-          this.remoteStream.addTrack(track);
+      if (event.streams && event.streams[0]) {
+        event.streams[0].getTracks().forEach((track) => {
+          if (this.remoteStream && !this.remoteStream.getTracks().some(t => t.id === track.id)) {
+            this.remoteStream.addTrack(track);
+          }
+        });
+      } else if (event.track) {
+        if (this.remoteStream && !this.remoteStream.getTracks().some(t => t.id === event.track.id)) {
+          this.remoteStream.addTrack(event.track);
         }
-      });
+      }
+
       if (this.onRemoteStreamCallback && this.remoteStream) {
         this.onRemoteStreamCallback(this.remoteStream);
       }
@@ -125,9 +159,28 @@ export class WebRTCConnection {
       if (this.onConnectionStateChangeCallback && pc) {
         this.onConnectionStateChangeCallback(pc.connectionState);
       }
+      if (pc.connectionState === 'failed') {
+        try {
+          pc.restartIce();
+        } catch (e) {}
+      }
     };
 
     return pc;
+  }
+
+  private async flushPendingCandidates() {
+    if (!this.pc || !this.pc.remoteDescription) return;
+    while (this.pendingCandidates.length > 0) {
+      const candidate = this.pendingCandidates.shift();
+      if (candidate) {
+        try {
+          await this.pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.warn('Error adding queued ICE candidate', err);
+        }
+      }
+    }
   }
 
   // CALLER: Doctor creates call offer
@@ -160,6 +213,7 @@ export class WebRTCConnection {
       if (updated.answer && !this.pc.currentRemoteDescription) {
         const answerDesc = new RTCSessionDescription(updated.answer);
         await this.pc.setRemoteDescription(answerDesc);
+        await this.flushPendingCandidates();
       }
 
       // Add callee's ICE candidates
@@ -168,10 +222,14 @@ export class WebRTCConnection {
           const key = `${candidateData.candidate}_${candidateData.sdpMLineIndex}`;
           if (!this.processedCandidates.has(key) && candidateData.candidate) {
             this.processedCandidates.add(key);
-            try {
-              await this.pc.addIceCandidate(new RTCIceCandidate(candidateData as RTCIceCandidateInit));
-            } catch (err) {
-              console.warn('Error adding callee ICE candidate', err);
+            if (this.pc.remoteDescription) {
+              try {
+                await this.pc.addIceCandidate(new RTCIceCandidate(candidateData as RTCIceCandidateInit));
+              } catch (err) {
+                console.warn('Error adding callee ICE candidate', err);
+              }
+            } else {
+              this.pendingCandidates.push(candidateData as RTCIceCandidateInit);
             }
           }
         }
@@ -191,6 +249,7 @@ export class WebRTCConnection {
       if (callDoc.offer && !this.pc.currentRemoteDescription) {
         const offerDesc = new RTCSessionDescription(callDoc.offer);
         await this.pc.setRemoteDescription(offerDesc);
+        await this.flushPendingCandidates();
 
         const answer = await this.pc.createAnswer();
         await this.pc.setLocalDescription(answer);
@@ -210,10 +269,14 @@ export class WebRTCConnection {
           const key = `${candidateData.candidate}_${candidateData.sdpMLineIndex}`;
           if (!this.processedCandidates.has(key) && candidateData.candidate) {
             this.processedCandidates.add(key);
-            try {
-              await this.pc.addIceCandidate(new RTCIceCandidate(candidateData as RTCIceCandidateInit));
-            } catch (err) {
-              console.warn('Error adding caller ICE candidate', err);
+            if (this.pc.remoteDescription) {
+              try {
+                await this.pc.addIceCandidate(new RTCIceCandidate(candidateData as RTCIceCandidateInit));
+              } catch (err) {
+                console.warn('Error adding caller ICE candidate', err);
+              }
+            } else {
+              this.pendingCandidates.push(candidateData as RTCIceCandidateInit);
             }
           }
         }
