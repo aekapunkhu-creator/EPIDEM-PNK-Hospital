@@ -42,6 +42,13 @@
         "id": { "type": "string" }
       }
     },
+    "calls": {
+      "title": "Telehealth Video Calls",
+      "description": "Real-time WebRTC Video Call sessions and consultation records",
+      "fields": {
+        "id": { "type": "string" }
+      }
+    },
     "users": {
       "title": "User Accounts",
       "description": "Registered system users",

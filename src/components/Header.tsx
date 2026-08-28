@@ -1,14 +1,16 @@
 import React from 'react';
-import { LayoutDashboard, MapPin, Users, UserCheck, Bell, FileSpreadsheet, ShieldAlert, UserCog, LogOut, Lock, Trash2, ClipboardList, Home } from 'lucide-react';
+import { LayoutDashboard, MapPin, Users, UserCheck, Bell, FileSpreadsheet, ShieldAlert, UserCog, LogOut, Lock, Trash2, ClipboardList, Home, Video as VideoIcon, HeartPulse } from 'lucide-react';
 import { UserAccount } from '../types';
 
 interface HeaderProps {
-  activeTab: 'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'line-gas';
-  setActiveTab: (tab: 'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'line-gas') => void;
+  activeTab: 'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas';
+  setActiveTab: (tab: 'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas') => void;
   patientsCount: number;
   contactsCount: number;
   investigationsCount?: number;
   homeVisitsCount?: number;
+  videoCallsCount?: number;
+  activeCallsCount?: number;
   missedDosesCount: number;
   onOpenExport: () => void;
   currentUser: UserAccount | null;
@@ -24,6 +26,8 @@ export const Header: React.FC<HeaderProps> = ({
   contactsCount,
   investigationsCount = 0,
   homeVisitsCount = 0,
+  videoCallsCount = 0,
+  activeCallsCount = 0,
   missedDosesCount,
   onOpenExport,
   currentUser,
@@ -236,6 +240,27 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="ml-1 bg-slate-800 text-slate-300 text-[10px] px-1.5 py-0.2 rounded-full">
               {homeVisitsCount}
             </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('telehealth')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition relative ${
+              activeTab === 'telehealth'
+                ? 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-semibold shadow'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <VideoIcon className="w-4 h-4 text-emerald-400" />
+            <span>วิดีโอคอลแพทย์ (Telehealth)</span>
+            {activeCallsCount > 0 ? (
+              <span className="ml-1 bg-amber-500 text-slate-950 font-bold text-[10px] px-1.5 py-0.2 rounded-full animate-pulse">
+                {activeCallsCount} สายเข้า
+              </span>
+            ) : (
+              <span className="ml-1 bg-slate-800 text-slate-300 text-[10px] px-1.5 py-0.2 rounded-full">
+                {videoCallsCount}
+              </span>
+            )}
           </button>
 
           <button

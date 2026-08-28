@@ -3,7 +3,7 @@ import { Patient, TBType, TreatmentStatus, SputumResultStatus, UserAccount } fro
 import { 
   Users, UserPlus, Search, Filter, Calendar, CheckCircle, CheckCircle2,
   XCircle, AlertCircle, Phone, FileText, Send, X, Plus, Clock, Eye, Edit3, Trash2, MapPin, Map, Navigation, Crosshair, FileSpreadsheet, Share2, Link,
-  CheckSquare, Square, QrCode, Sparkles
+  CheckSquare, Square, QrCode, Sparkles, Video as VideoIcon
 } from 'lucide-react';
 import { EditPatientModal } from './EditPatientModal';
 import { LocationPickerModal } from './LocationPickerModal';
@@ -28,6 +28,7 @@ interface PatientManagementProps {
   currentUser?: UserAccount | null;
   onOpenExcelImportModal?: () => void;
   onOpenShareLocationModal?: (patients?: Patient | Patient[]) => void;
+  onStartVideoCall?: (patient: Patient) => void;
   onShowToast?: (msg: string) => void;
 }
 
@@ -44,6 +45,7 @@ export const PatientManagement: React.FC<PatientManagementProps> = ({
   currentUser,
   onOpenExcelImportModal,
   onOpenShareLocationModal,
+  onStartVideoCall,
   onShowToast
 }) => {
   const isAdmin = currentUser?.role === 'Admin';
@@ -455,6 +457,16 @@ export const PatientManagement: React.FC<PatientManagementProps> = ({
                       </span>
                     </td>
                     <td className="py-3.5 px-4 text-center space-x-1">
+                      {onStartVideoCall && (
+                        <button
+                          onClick={() => onStartVideoCall(patient)}
+                          className="px-2.5 py-1 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-600 hover:text-white font-bold transition inline-flex items-center gap-1 shadow-sm"
+                          title="เริ่มวิดีโอคอลปรึกษาแพทย์กับคนไข้รายนี้"
+                        >
+                          <VideoIcon className="w-3.5 h-3.5 text-teal-600" />
+                          <span>วิดีโอคอล</span>
+                        </button>
+                      )}
                       <button
                         onClick={() => setSelectedPatient(patient)}
                         className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-medium transition"
@@ -546,6 +558,19 @@ export const PatientManagement: React.FC<PatientManagementProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
+                {onStartVideoCall && (
+                  <button
+                    onClick={() => {
+                      onStartVideoCall(selectedPatient);
+                      setSelectedPatient(null);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition"
+                    title="เริ่มวิดีโอคอลพบแพทย์กับคนไข้รายนี้"
+                  >
+                    <VideoIcon className="w-3.5 h-3.5" />
+                    <span>เริ่มวิดีโอคอล</span>
+                  </button>
+                )}
                 {isAdmin && (
                   <button
                     onClick={() => {

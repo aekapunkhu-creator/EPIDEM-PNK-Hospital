@@ -23,16 +23,21 @@ import {
   INITIAL_USERS
 } from './data/mockData';
 
-import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord } from './types';
+import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord, VideoCallSession } from './types';
 import { CheckCircle2, AlertCircle, Database } from 'lucide-react';
 import { InvestigationManagement } from './components/InvestigationManagement';
 import { HomeVisitManagement } from './components/HomeVisitManagement';
+import { TelehealthManagement } from './components/TelehealthManagement';
+import { PatientVideoCallView } from './components/PatientVideoCallView';
+import { DoctorVideoCallModal } from './components/DoctorVideoCallModal';
 
 import {
   subscribePatients,
   subscribeContacts,
   subscribeInvestigations,
   subscribeHomeVisits,
+  subscribeCalls,
+  deleteCallSession,
   subscribeUsers,
   subscribeLineConfig,
   subscribeLogs,
@@ -63,7 +68,7 @@ const MOCK_CONTACT_IDS = ['CT-101', 'CT-102', 'CT-103', 'CT-104'];
 const MOCK_LOG_IDS = ['LOG-001', 'LOG-002', 'LOG-003'];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'line-gas'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas'>('dashboard');
 
   // Application Persistent State
   const [patients, setPatients] = useState<Patient[]>(() => {
@@ -108,6 +113,8 @@ export default function App() {
     return [];
   });
 
+  const [callSessions, setCallSessions] = useState<VideoCallSession[]>([]);
+
   const [lineConfig, setLineConfig] = useState<LineNotificationConfig>(() => {
     const saved = safeStorage.getItem('tb_phon_line_config_v2');
     if (saved) {
@@ -140,6 +147,11 @@ export default function App() {
 
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
   const [isFirestoreReady, setIsFirestoreReady] = useState(false);
+
+  // Doctor Video Call State
+  const [isDoctorCallModalOpen, setIsDoctorCallModalOpen] = useState(false);
+  const [doctorCallPatient, setDoctorCallPatient] = useState<Patient | null>(null);
+  const [doctorCallSession, setDoctorCallSession] = useState<VideoCallSession | null>(null);
 
   // Real-time Firestore Cloud DB Sync & Initialization
   useEffect(() => {
@@ -223,6 +235,11 @@ export default function App() {
       setLogs(cleaned);
     });
 
+    // 8. Subscribe Video Calls
+    const unsubCalls = subscribeCalls((calls) => {
+      setCallSessions(calls || []);
+    });
+
     return () => {
       unsubPatients();
       unsubContacts();
@@ -231,6 +248,7 @@ export default function App() {
       unsubUsers();
       unsubLine();
       unsubLogs();
+      unsubCalls();
     };
   }, []);
 
@@ -361,6 +379,42 @@ export default function App() {
     return [];
   };
 
+  // Detect URL parameter for public patient video call link
+  const getPublicVideoCallIdFromUrl = (): string | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const urlStr = window.location.href;
+      const urlObj = new URL(urlStr);
+
+      // 1. Direct query parameters
+      const callParam = urlObj.searchParams.get('videoCall') || 
+                        urlObj.searchParams.get('call') || 
+                        urlObj.searchParams.get('telehealth') || 
+                        urlObj.searchParams.get('room');
+      if (callParam) return decodeURIComponent(callParam).trim();
+
+      // 2. Hash-based routing (#videoCall=CALL-123 or #/call/CALL-123)
+      const hash = window.location.hash;
+      if (hash) {
+        const cleanHash = hash.replace(/^#\/?/, '');
+        const match = cleanHash.match(/(?:call|videoCall|telehealth)\/([^/?&#]+)/i);
+        if (match && match[1]) return decodeURIComponent(match[1]).trim();
+        const queryPart = cleanHash.includes('?') ? cleanHash.split('?')[1] : cleanHash;
+        const hashParams = new URLSearchParams(queryPart);
+        const hashCall = hashParams.get('videoCall') || hashParams.get('call') || hashParams.get('telehealth') || hashParams.get('room');
+        if (hashCall) return decodeURIComponent(hashCall).trim();
+      }
+
+      // 3. Fallback regex
+      const regex = urlStr.match(/[?&#](?:videoCall|call|telehealth)=([^&#]+)/i);
+      if (regex && regex[1]) return decodeURIComponent(regex[1]).trim();
+    } catch (err) {
+      console.warn('Video call URL parse error:', err);
+    }
+    return null;
+  };
+
+  const [publicVideoCallId, setPublicVideoCallId] = useState<string | null>(() => getPublicVideoCallIdFromUrl());
   const publicTargetIds = getPublicTargetIdsFromUrl();
   const publicTargetId = publicTargetIds.length > 0 ? publicTargetIds[0] : null;
 
@@ -692,6 +746,26 @@ export default function App() {
     (publicTargetId ? patients.find(p => p.id === publicTargetId || p.hn === publicTargetId) : null) ||
     (publicTargetId ? INITIAL_PATIENTS.find(p => p.id === publicTargetId || p.hn === publicTargetId) : null);
 
+  // 0. Public Patient Video Call Link View (Direct patient-facing video call without login)
+  if (publicVideoCallId) {
+    return (
+      <PatientVideoCallView
+        callId={publicVideoCallId}
+        onExit={() => {
+          setPublicVideoCallId(null);
+          if (typeof window !== 'undefined') {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('videoCall');
+            url.searchParams.delete('call');
+            url.searchParams.delete('telehealth');
+            url.searchParams.delete('room');
+            window.location.href = url.pathname;
+          }
+        }}
+      />
+    );
+  }
+
   // 1. If accessed via public location link / state: Use Email-based authentication (No User/Password required)
   if (publicTargetId || publicPinningPatient) {
     // If patient is not yet loaded and firestore is still initializing, show nice medical loading screen
@@ -807,6 +881,8 @@ export default function App() {
         contactsCount={contacts.length}
         investigationsCount={investigations.length}
         homeVisitsCount={homeVisits.length}
+        videoCallsCount={callSessions.length}
+        activeCallsCount={callSessions.filter(c => c.status === 'waiting' || c.status === 'ringing').length}
         missedDosesCount={missedDosesCount}
         onOpenExport={() => setIsExportOpen(true)}
         currentUser={currentUser}
@@ -894,6 +970,11 @@ export default function App() {
               }
               setIsShareLocationOpen(true);
             }}
+            onStartVideoCall={(patient) => {
+              setDoctorCallPatient(patient);
+              setDoctorCallSession(null);
+              setIsDoctorCallModalOpen(true);
+            }}
             onShowToast={showToast}
           />
         )}
@@ -937,6 +1018,28 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'telehealth' && (
+          <TelehealthManagement
+            patients={patients}
+            currentUser={currentUser}
+            callSessions={callSessions}
+            onStartVideoCall={(patient, existingSession) => {
+              setDoctorCallPatient(patient);
+              setDoctorCallSession(existingSession || null);
+              setIsDoctorCallModalOpen(true);
+            }}
+            onOpenLineSendModal={(patient, customMsg) => {
+              setLineSendTargetPatient(patient);
+              setLineSendTargetPatients(undefined);
+              setIsLineSendModalOpen(true);
+              if (customMsg) {
+                // Pre-fill notify message if needed
+              }
+            }}
+            onShowToast={showToast}
+          />
+        )}
+
         {activeTab === 'line-gas' && (
           <LineAppsScript
             lineConfig={lineConfig}
@@ -946,6 +1049,22 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* Doctor Video Call Modal */}
+      {isDoctorCallModalOpen && doctorCallPatient && currentUser && (
+        <DoctorVideoCallModal
+          isOpen={isDoctorCallModalOpen}
+          onClose={() => {
+            setIsDoctorCallModalOpen(false);
+            setDoctorCallPatient(null);
+            setDoctorCallSession(null);
+          }}
+          patient={doctorCallPatient}
+          existingCallSession={doctorCallSession || undefined}
+          currentUser={currentUser}
+          onShowToast={showToast}
+        />
+      )}
 
       {/* User Management & Password Modal */}
       {currentUser && (

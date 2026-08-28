@@ -545,3 +545,65 @@ export interface HomeVisitRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+// ระบบวิดีโอคอลปรึกษาแพทย์และติดตามการรักษา (Telehealth Video Call System)
+export type CallStatus = 'waiting' | 'ringing' | 'connected' | 'ended' | 'rejected' | 'missed';
+
+export interface CallChatMessage {
+  id: string;
+  sender: 'doctor' | 'patient';
+  senderName: string;
+  text: string;
+  timestamp: string;
+}
+
+export interface VideoCallSession {
+  id: string; // roomId เช่น CALL-xxxx
+  patientId: string;
+  patientName: string;
+  patientHN: string;
+  patientPhone?: string;
+  patientSubdistrict?: string;
+  patientVillage?: string;
+  callerId: string; // User ID ของแพทย์/เจ้าหน้าที่
+  callerName: string;
+  callerRole: string; // 'แพทย์' | 'พยาบาล' | 'เจ้าหน้าที่สาธารณสุข' | 'อสม.'
+  hospitalName: string;
+  status: CallStatus;
+  createdAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  durationSeconds?: number;
+  reason?: string; // e.g. 'ติดตามอาการข้างเคียง (ADR)', 'ประเมินการกินยา V-DOTS', 'ปรึกษาผลตรวจเสมหะ/X-Ray'
+  doctorNotes?: string;
+  prescriptionsOrAdvice?: string;
+  vitalSummary?: {
+    cough?: string;
+    fever?: boolean;
+    sideEffectsSummary?: string[];
+    adherence?: string;
+    weight?: number;
+  };
+  messages?: CallChatMessage[];
+  
+  // WebRTC Signaling fields
+  offer?: {
+    type: 'offer';
+    sdp: string;
+  };
+  answer?: {
+    type: 'answer';
+    sdp: string;
+  };
+  callerIceCandidates?: Array<{
+    candidate: string;
+    sdpMid: string | null;
+    sdpMLineIndex: number | null;
+  }>;
+  calleeIceCandidates?: Array<{
+    candidate: string;
+    sdpMid: string | null;
+    sdpMLineIndex: number | null;
+  }>;
+}
+

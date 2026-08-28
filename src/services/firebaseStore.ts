@@ -27,7 +27,7 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord } from '../types';
+import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord, VideoCallSession, CallChatMessage, CallStatus } from '../types';
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
@@ -472,4 +472,179 @@ export async function clearCollectionInFirestore(collectionName: string) {
     console.error(`Error clearing collection ${collectionName} in firestore`, e);
   }
 }
+
+// ----------------------------------------------------
+// TELEHEALTH VIDEO CALL FUNCTIONS
+// ----------------------------------------------------
+
+export function subscribeCalls(
+  onUpdate: (calls: VideoCallSession[]) => void,
+  onError?: (err: any) => void
+) {
+  try {
+    const colRef = collection(db, 'calls');
+    const unsub = onSnapshot(
+      colRef,
+      (snapshot) => {
+        const list: VideoCallSession[] = [];
+        snapshot.forEach((d) => {
+          list.push(d.data() as VideoCallSession);
+        });
+        // sort newest first
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        onUpdate(list);
+      },
+      (err) => {
+        console.warn('Calls listener error', err);
+        if (onError) onError(err);
+      }
+    );
+    return unsub;
+  } catch (e) {
+    console.error('Error setting up calls listener', e);
+    return () => {};
+  }
+}
+
+export function subscribeCallById(
+  callId: string,
+  onUpdate: (call: VideoCallSession | null) => void,
+  onError?: (err: any) => void
+) {
+  try {
+    const docRef = doc(db, 'calls', callId);
+    const unsub = onSnapshot(
+      docRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          onUpdate(snapshot.data() as VideoCallSession);
+        } else {
+          onUpdate(null);
+        }
+      },
+      (err) => {
+        console.warn(`Call doc listener error for ${callId}`, err);
+        if (onError) onError(err);
+      }
+    );
+    return unsub;
+  } catch (e) {
+    console.error('Error setting up call doc listener', e);
+    return () => {};
+  }
+}
+
+export async function saveCallSessionToFirestore(call: VideoCallSession) {
+  try {
+    const docRef = doc(db, 'calls', call.id);
+    await setDoc(docRef, call, { merge: true });
+
+    // Fallback sync to RTDB
+    try {
+      await rtdbSet(rtdbRef(rtdb, `calls/${call.id}`), call);
+    } catch (rtdbErr) {}
+  } catch (e) {
+    console.error('Error saving call session to firestore', e);
+  }
+}
+
+export async function updateCallStatus(
+  callId: string,
+  status: CallStatus,
+  extra: Partial<VideoCallSession> = {}
+) {
+  try {
+    const docRef = doc(db, 'calls', callId);
+    const updateData: any = {
+      status,
+      ...extra
+    };
+    if (status === 'connected' && !extra.startedAt) {
+      updateData.startedAt = new Date().toISOString();
+    }
+    if (status === 'ended' && !extra.endedAt) {
+      updateData.endedAt = new Date().toISOString();
+    }
+    await setDoc(docRef, updateData, { merge: true });
+
+    try {
+      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/status`), status);
+    } catch (rtdbErr) {}
+  } catch (e) {
+    console.error('Error updating call status', e);
+  }
+}
+
+export async function addCallIceCandidate(
+  callId: string,
+  role: 'caller' | 'callee',
+  candidate: { candidate: string; sdpMid: string | null; sdpMLineIndex: number | null }
+) {
+  try {
+    const docRef = doc(db, 'calls', callId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data() as VideoCallSession;
+      const key = role === 'caller' ? 'callerIceCandidates' : 'calleeIceCandidates';
+      const existing = data[key] || [];
+      // avoid duplicates
+      if (!existing.some(c => c.candidate === candidate.candidate)) {
+        await setDoc(docRef, {
+          [key]: [...existing, candidate]
+        }, { merge: true });
+      }
+    }
+  } catch (e) {
+    console.error('Error adding ICE candidate', e);
+  }
+}
+
+export async function addCallMessage(callId: string, message: CallChatMessage) {
+  try {
+    const docRef = doc(db, 'calls', callId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      const data = snap.data() as VideoCallSession;
+      const existing = data.messages || [];
+      await setDoc(docRef, {
+        messages: [...existing, message]
+      }, { merge: true });
+    }
+  } catch (e) {
+    console.error('Error adding call message', e);
+  }
+}
+
+export async function deleteCallSession(callId: string) {
+  try {
+    const docRef = doc(db, 'calls', callId);
+    await deleteDoc(docRef);
+    try {
+      await rtdbRemove(rtdbRef(rtdb, `calls/${callId}`));
+    } catch (rtdbErr) {}
+  } catch (e) {
+    console.error('Error deleting call session from firestore', e);
+  }
+}
+
+export async function fetchCallSessionById(callId: string): Promise<VideoCallSession | null> {
+  try {
+    const docRef = doc(db, 'calls', callId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return snap.data() as VideoCallSession;
+    }
+    try {
+      const rtdbSnap = await rtdbGet(rtdbRef(rtdb, `calls/${callId}`));
+      if (rtdbSnap.exists()) {
+        return rtdbSnap.val() as VideoCallSession;
+      }
+    } catch (rtdbErr) {}
+    return null;
+  } catch (e) {
+    console.error('Error fetching call session by ID', e);
+    return null;
+  }
+}
+
 
