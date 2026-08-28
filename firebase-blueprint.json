@@ -1,0 +1,53 @@
+{
+  "entities": {
+    "patients": {
+      "title": "Patients",
+      "description": "TB Patients records",
+      "fields": {
+        "id": { "type": "string" }
+      }
+    },
+    "contacts": {
+      "title": "Household Contacts",
+      "description": "Contact tracing records",
+      "fields": {
+        "id": { "type": "string" }
+      }
+    },
+    "lineConfig": {
+      "title": "LINE Config",
+      "description": "LINE GAS Notification Configuration",
+      "fields": {
+        "id": { "type": "string" }
+      }
+    },
+    "logs": {
+      "title": "Notification Logs",
+      "description": "Audit and notification logs",
+      "fields": {
+        "id": { "type": "string" }
+      }
+    },
+    "investigations": {
+      "title": "Epidemiology Investigations",
+      "description": "TB Epidemiological Investigation Records",
+      "fields": {
+        "id": { "type": "string" }
+      }
+    },
+    "homeVisits": {
+      "title": "Home Visits",
+      "description": "Patient home visit follow-up and monitoring records",
+      "fields": {
+        "id": { "type": "string" }
+      }
+    },
+    "users": {
+      "title": "User Accounts",
+      "description": "Registered system users",
+      "fields": {
+        "id": { "type": "string" }
+      }
+    }
+  }
+}
