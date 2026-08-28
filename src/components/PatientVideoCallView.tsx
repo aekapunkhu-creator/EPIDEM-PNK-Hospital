@@ -10,14 +10,21 @@ import {
   updateCallStatus, 
   addCallMessage 
 } from '../services/firebaseStore';
-import { MultiPeerWebRTCManager, RemoteParticipantStream } from '../services/multiPeerWebRTC';
+import { 
+  MultiPeerWebRTCManager, 
+  RemoteParticipantStream,
+  NetworkStatsInfo,
+  NetworkQuality,
+  VideoQualityMode
+} from '../services/multiPeerWebRTC';
 import { VideoConferenceGrid } from './VideoConferenceGrid';
 import { callAudio } from '../utils/callAudio';
 import { 
   Phone, PhoneOff, Mic, MicOff, Video as VideoIcon, VideoOff, 
   SwitchCamera, MessageSquare, Send, HeartPulse, Building2, 
   ShieldCheck, AlertCircle, CheckCircle2, Check,
-  Users, Volume2, User, UserCheck, Stethoscope
+  Users, Volume2, User, UserCheck, Stethoscope,
+  Wifi, WifiOff, Zap, RefreshCw
 } from 'lucide-react';
 
 interface PatientVideoCallViewProps {
@@ -54,6 +61,18 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
   const [showChat, setShowChat] = useState<boolean>(false);
   const [chatMessage, setChatMessage] = useState<string>('');
   const [mediaError, setMediaError] = useState<string | null>(null);
+
+  // Network Resilience & Low-Bandwidth State
+  const [qualityMode, setQualityMode] = useState<VideoQualityMode>('balanced');
+  const [networkStats, setNetworkStats] = useState<NetworkStatsInfo>({
+    quality: 'good',
+    rttMs: 50,
+    packetLossPercent: 0,
+    bitrateKbps: 350,
+    isLowBandwidthMode: false
+  });
+  const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // References
   const webrtcManagerRef = useRef<MultiPeerWebRTCManager | null>(null);
@@ -159,10 +178,18 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
         manager.onParticipantsChange((participantList) => {
           setParticipants([...participantList]);
         });
+
+        // Real-time Network Telemetry & Quality Listener
+        manager.onNetworkQualityChange((stats) => {
+          setNetworkStats(stats);
+          if (stats.quality === 'poor') {
+            showToast('⚠️ สัญญาณเน็ตอ่อน ระบบกำลังปรับเป็นโหมดประหยัดข้อมูลให้อัตโนมัติ');
+          }
+        });
       }
 
-      // Start local camera/mic
-      const stream = await webrtcManagerRef.current.startLocalMedia(true, true, facingMode);
+      // Start local camera/mic with balanced quality
+      const stream = await webrtcManagerRef.current.startLocalMedia(true, true, facingMode, qualityMode);
       setLocalStream(stream);
       setHasStartedMedia(true);
 
@@ -174,6 +201,40 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
     } finally {
       setIsAttemptingMedia(false);
     }
+  };
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
+  // Toggle Low-Bandwidth Mode
+  const handleToggleLowBandwidthMode = async () => {
+    if (!webrtcManagerRef.current) return;
+    const newMode: VideoQualityMode = qualityMode === 'low' ? 'balanced' : 'low';
+    setQualityMode(newMode);
+    await webrtcManagerRef.current.setQualityMode(newMode);
+    showToast(newMode === 'low' ? '⚡ เปิดโหมดเน็ตช้า (ลดความละเอียดเพื่อความเสถียร)' : '📶 กลับสู่โหมดคุณภาพปกติ');
+  };
+
+  // Toggle Audio-Only Mode for saving 100% video bandwidth
+  const handleToggleAudioOnly = async () => {
+    if (!webrtcManagerRef.current) return;
+    const isNowAudioOnly = await webrtcManagerRef.current.toggleAudioOnlyMode();
+    setIsVideoOff(isNowAudioOnly);
+    showToast(isNowAudioOnly ? '🎙️ เปิดโหมดเสียงอย่างเดียว (ประหยัดเน็ตสูงสุด)' : '📹 เปิดกล้องวิดีโอ');
+  };
+
+  // 1-Click Reconnect (Active ICE Restart)
+  const handleManualReconnect = async () => {
+    if (!webrtcManagerRef.current || isReconnecting) return;
+    setIsReconnecting(true);
+    showToast('🔄 กำลังกู้คืนสัญญาณและต่อสายใหม่...');
+    await webrtcManagerRef.current.reconnectAllPeers();
+    setTimeout(() => {
+      setIsReconnecting(false);
+      showToast('✅ เชื่อมต่อสัญญาณใหม่เรียบร้อยแล้ว');
+    }, 2000);
   };
 
   // Update Identity (e.g. if user is actually a relative or VDOT)

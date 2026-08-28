@@ -14,14 +14,21 @@ import {
   addCallMessage,
   saveHomeVisitToFirestore 
 } from '../services/firebaseStore';
-import { MultiPeerWebRTCManager, RemoteParticipantStream } from '../services/multiPeerWebRTC';
+import { 
+  MultiPeerWebRTCManager, 
+  RemoteParticipantStream,
+  NetworkStatsInfo,
+  NetworkQuality,
+  VideoQualityMode
+} from '../services/multiPeerWebRTC';
 import { VideoConferenceGrid } from './VideoConferenceGrid';
 import { callAudio } from '../utils/callAudio';
 import { 
   X, Phone, PhoneOff, PhoneCall, Mic, MicOff, Video as VideoIcon, VideoOff, 
   Monitor, Camera, MessageSquare, Send, Copy, Check, QrCode, 
   Share2, HeartPulse, ShieldCheck, AlertCircle, FileText, CheckCircle2,
-  Users, RefreshCw, Clock, ExternalLink, Sparkles, Building2, User, Stethoscope
+  Users, RefreshCw, Clock, ExternalLink, Sparkles, Building2, User, Stethoscope,
+  Wifi, WifiOff, Zap, Sliders
 } from 'lucide-react';
 
 interface DoctorVideoCallModalProps {
@@ -69,6 +76,17 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
   const [isVideoOff, setIsVideoOff] = useState<boolean>(false);
   const [isScreenSharing, setIsScreenSharing] = useState<boolean>(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
+
+  // Network Resilience & Low-Bandwidth State
+  const [qualityMode, setQualityMode] = useState<VideoQualityMode>('balanced');
+  const [networkStats, setNetworkStats] = useState<NetworkStatsInfo>({
+    quality: 'good',
+    rttMs: 45,
+    packetLossPercent: 0,
+    bitrateKbps: 350,
+    isLowBandwidthMode: false
+  });
+  const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
 
   // In-Call Chat & Notes
   const [showChat, setShowChat] = useState<boolean>(false);
@@ -180,8 +198,13 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
         }
       });
 
-      // Start local camera & join room
-      const stream = await manager.startLocalMedia(true, true, 'user');
+      // Real-time Network Telemetry & Quality Listener
+      manager.onNetworkQualityChange((stats) => {
+        setNetworkStats(stats);
+      });
+
+      // Start local camera & join room with balanced quality
+      const stream = await manager.startLocalMedia(true, true, 'user', qualityMode);
       setLocalStream(stream);
 
       await manager.joinRoom();
@@ -189,6 +212,27 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
       console.error('Error initiating doctor video call:', err);
       setMediaError('ไม่สามารถเปิดกล้องหรือไมโครโฟนได้ กรุณาตรวจสอบสิทธิ์การใช้งานของเบราว์เซอร์');
     }
+  };
+
+  // Switch Low-Bandwidth Mode (1-Click for Slow Internet / Rural 3G)
+  const handleToggleLowBandwidthMode = async () => {
+    if (!webrtcManagerRef.current) return;
+    const newMode: VideoQualityMode = qualityMode === 'low' ? 'balanced' : 'low';
+    setQualityMode(newMode);
+    await webrtcManagerRef.current.setQualityMode(newMode);
+    onShowToast(newMode === 'low' ? '⚡ เปิดโหมดเน็ตช้า (ลดแบนด์วิธเพื่อความเสถียร)' : '📶 กลับสู่โหมดคุณภาพปกติ');
+  };
+
+  // 1-Click Reconnect (Active ICE Restart)
+  const handleManualReconnect = async () => {
+    if (!webrtcManagerRef.current || isReconnecting) return;
+    setIsReconnecting(true);
+    onShowToast('🔄 กำลังกู้คืนและต่อสัญญาณใหม่...');
+    await webrtcManagerRef.current.reconnectAllPeers();
+    setTimeout(() => {
+      setIsReconnecting(false);
+      onShowToast('✅ เชื่อมต่อสัญญาณใหม่เรียบร้อยแล้ว');
+    }, 2000);
   };
 
   // Timer Effect
@@ -630,7 +674,60 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                 remoteStreams={remoteStreams}
                 isLocalMuted={isMuted}
                 isLocalVideoOff={isVideoOff}
+                networkQuality={networkStats.quality}
+                isLowBandwidth={qualityMode === 'low'}
               />
+
+              {/* Floating Live Network Telemetry & Bandwidth Bar */}
+              <div className="absolute top-3 left-3 z-20 flex items-center gap-2 pointer-events-auto">
+                <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full backdrop-blur-md text-[11px] font-medium border shadow-lg ${
+                  networkStats.quality === 'good'
+                    ? 'bg-slate-950/80 border-emerald-500/40 text-emerald-300'
+                    : networkStats.quality === 'fair'
+                    ? 'bg-amber-950/85 border-amber-500/50 text-amber-300'
+                    : 'bg-red-950/90 border-red-500/50 text-red-300 animate-pulse'
+                }`}>
+                  {networkStats.quality === 'good' ? (
+                    <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+                  ) : networkStats.quality === 'fair' ? (
+                    <Wifi className="w-3.5 h-3.5 text-amber-400" />
+                  ) : (
+                    <WifiOff className="w-3.5 h-3.5 text-red-400" />
+                  )}
+                  <span>
+                    {networkStats.quality === 'good' ? 'สัญญาณเสถียรดี' : networkStats.quality === 'fair' ? 'สัญญาณปานกลาง' : 'สัญญาณเน็ตอ่อน/ช้า'}
+                  </span>
+                  <span className="opacity-60">|</span>
+                  <span className="font-mono">{networkStats.rttMs}ms</span>
+                </div>
+
+                {/* 1-Click Low Bandwidth Mode Quick Switch */}
+                <button
+                  type="button"
+                  onClick={handleToggleLowBandwidthMode}
+                  className={`flex items-center gap-1 px-3 py-1 rounded-full text-[11px] font-bold border transition shadow-lg backdrop-blur-md ${
+                    qualityMode === 'low'
+                      ? 'bg-cyan-600 hover:bg-cyan-500 text-white border-cyan-400 shadow-cyan-900/30'
+                      : 'bg-slate-900/85 hover:bg-slate-800 text-slate-300 border-slate-700'
+                  }`}
+                  title="ลดความละเอียดภาพและแบนด์วิธเพื่อความเสถียรสูงสุด (เหมาะสำหรับเน็ตมือถือ 3G/4G ในพื้นที่ห่างไกล)"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-300" />
+                  <span>{qualityMode === 'low' ? 'โหมดเน็ตช้า (เปิดอยู่)' : 'โหมดเน็ตช้า'}</span>
+                </button>
+
+                {/* 1-Click Reconnect / Recover Signal Button */}
+                <button
+                  type="button"
+                  onClick={handleManualReconnect}
+                  disabled={isReconnecting}
+                  className="flex items-center gap-1 bg-slate-900/85 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700 px-2.5 py-1 rounded-full text-[11px] font-medium transition backdrop-blur-md shadow-lg"
+                  title="กู้คืนสัญญาณและต่อสายใหม่ทันทีหากภาพหรือเสียงสะดุด"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-teal-400 ${isReconnecting ? 'animate-spin' : ''}`} />
+                  <span className="hidden sm:inline">กู้คืนสัญญาณ</span>
+                </button>
+              </div>
 
               {/* Waiting overlay if 0 remote participants */}
               {remoteStreams.length === 0 && (
