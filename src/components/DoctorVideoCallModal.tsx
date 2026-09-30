@@ -28,7 +28,7 @@ import {
   Monitor, Camera, MessageSquare, Send, Copy, Check, QrCode, 
   Share2, HeartPulse, ShieldCheck, AlertCircle, FileText, CheckCircle2,
   Users, RefreshCw, Clock, ExternalLink, Sparkles, Building2, User, Stethoscope,
-  Wifi, WifiOff, Zap, Sliders
+  Wifi, WifiOff, Zap, Sliders, Maximize2, Minimize2, Tv
 } from 'lucide-react';
 
 interface DoctorVideoCallModalProps {
@@ -87,6 +87,9 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
     isLowBandwidthMode: false
   });
   const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
+  const [isFullscreenPresentation, setIsFullscreenPresentation] = useState<boolean>(false);
+  const [aspectFit, setAspectFit] = useState<'16:9' | 'fill'>('16:9');
+  const [showClinicalConsole, setShowClinicalConsole] = useState<boolean>(true);
 
   // In-Call Chat & Notes
   const [showChat, setShowChat] = useState<boolean>(false);
@@ -204,13 +207,28 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
       });
 
       // Start local camera & join room with balanced quality
-      const stream = await manager.startLocalMedia(true, true, 'user', qualityMode);
+      let stream: MediaStream | null = null;
+      try {
+        stream = await manager.startLocalMedia(true, true, 'user', qualityMode);
+      } catch (mediaErr: any) {
+        console.warn('Initial startLocalMedia caught error, falling back to dummy stream:', mediaErr);
+        stream = manager.createDummyMediaStream();
+        setMediaError('ไม่พบอุปกรณ์กล้องหรือไมโครโฟน แต่ระบบเชื่อมต่อเข้าห้องตรวจให้ท่านสามารถรับชมและพิมพ์ข้อความได้');
+      }
       setLocalStream(stream);
 
+      // Always join the room signaling
       await manager.joinRoom();
     } catch (err: any) {
       console.error('Error initiating doctor video call:', err);
-      setMediaError('ไม่สามารถเปิดกล้องหรือไมโครโฟนได้ กรุณาตรวจสอบสิทธิ์การใช้งานของเบราว์เซอร์');
+      if (webrtcManagerRef.current) {
+        try {
+          await webrtcManagerRef.current.joinRoom();
+        } catch (joinErr) {
+          console.error('joinRoom fallback failed:', joinErr);
+        }
+      }
+      setMediaError('ระบบเชื่อมต่อห้องตรวจในโหมดรับฟัง (ไม่พบอุปกรณ์กล้องหรือไมโครโฟนในเครื่องนี้)');
     }
   };
 
@@ -523,14 +541,34 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
   const patientLink = getPatientCallUrl(callId);
   const totalInCall = remoteStreams.length + 1;
 
+  const handleToggleFullscreen = () => {
+    if (!isFullscreenPresentation) {
+      document.documentElement.requestFullscreen?.().catch(() => {});
+      setIsFullscreenPresentation(true);
+    } else {
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
+      setIsFullscreenPresentation(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 font-['Prompt',sans-serif] overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700 rounded-3xl w-full max-w-6xl h-[94vh] flex flex-col shadow-2xl overflow-hidden text-white">
+    <div className={`fixed inset-0 z-50 font-['Prompt',sans-serif] ${
+      isFullscreenPresentation 
+        ? 'w-screen h-screen bg-black flex flex-col p-0 overflow-hidden' 
+        : 'bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 overflow-y-auto'
+    }`}>
+      <div className={`bg-slate-900 flex flex-col text-white transition-all duration-300 ${
+        isFullscreenPresentation 
+          ? 'w-full h-full rounded-none border-none max-w-none shadow-none overflow-hidden' 
+          : 'border border-slate-700 rounded-3xl w-full max-w-6xl h-[94vh] shadow-2xl overflow-hidden'
+      }`}>
         
         {/* Modal Header */}
-        <div className="p-4 bg-slate-800/80 border-b border-slate-700 flex items-center justify-between gap-3">
+        <div className="p-3.5 sm:p-4 bg-slate-800/90 border-b border-slate-700 flex items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-600 flex items-center justify-center text-white shadow-md">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-600 flex items-center justify-center text-white shadow-md shrink-0">
               <HeartPulse className="w-6 h-6" />
             </div>
             <div>
@@ -541,6 +579,11 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                 <span className="font-mono text-xs bg-emerald-950 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-bold">
                   HN: {patient.hn}
                 </span>
+                {isFullscreenPresentation && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    16:9 Fullscreen Presentation Fit
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400">
                 ตำบล{patient.subdistrict} ({patient.village}) &bull; สูตรยา: <span className="text-amber-300 font-bold">{patient.regimen || '2HRZE/4HR'}</span> &bull; ผู้เปิดห้อง: {currentUser.fullName}
@@ -549,6 +592,48 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Widescreen 16:9 Presentation Fit Button */}
+            <button
+              type="button"
+              onClick={handleToggleFullscreen}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition border ${
+                isFullscreenPresentation
+                  ? 'bg-cyan-600 hover:bg-cyan-500 text-white border-cyan-400 shadow-md'
+                  : 'bg-slate-800 hover:bg-slate-700 text-cyan-300 border-cyan-500/40'
+              }`}
+              title={isFullscreenPresentation ? 'ออกจากโหมดเต็มหน้าจอ (ESC)' : 'เต็มหน้าจอพอดี 16:9 (Fullscreen Presentation Fit)'}
+            >
+              {isFullscreenPresentation ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              <span className="hidden md:inline">{isFullscreenPresentation ? 'ย่อหน้าต่าง' : 'เต็มหน้าจอ 16:9'}</span>
+            </button>
+
+            {/* Toggle Clinical Panel for Full Video Widescreen Fit */}
+            <button
+              type="button"
+              onClick={() => setShowClinicalConsole(!showClinicalConsole)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition border ${
+                !showClinicalConsole
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white border-amber-400 font-bold'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+              title={showClinicalConsole ? 'ซ่อนแผงบันทึกเพื่อขยายวิดีโอเต็ม 16:9' : 'แสดงแผงประเมินและบันทึกประวัติ'}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{showClinicalConsole ? 'ขยายวิดีโอเดี่ยว' : 'แสดงแผงตรวจ'}</span>
+            </button>
+
+            {/* Aspect Ratio Switcher when in Fullscreen */}
+            {isFullscreenPresentation && (
+              <button
+                type="button"
+                onClick={() => setAspectFit(aspectFit === '16:9' ? 'fill' : '16:9')}
+                className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-medium transition"
+                title="สลับสัดส่วนวิดีโอ 16:9 พอดีจอ หรือ เต็มจอ"
+              >
+                <span>{aspectFit === '16:9' ? '16:9 Fit' : 'Fill'}</span>
+              </button>
+            )}
+
             {remoteStreams.length > 0 ? (
               <button
                 type="button"
@@ -577,6 +662,22 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Media Warning Notice if device not found */}
+        {mediaError && (
+          <div className="bg-amber-950/80 border-b border-amber-600/50 px-4 py-2 text-xs text-amber-200 flex items-center justify-between gap-2 shrink-0 animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+              <span>{mediaError}</span>
+            </div>
+            <button
+              onClick={() => setMediaError(null)}
+              className="text-amber-400 hover:text-white text-xs underline font-semibold cursor-pointer"
+            >
+              รับทราบ
+            </button>
+          </div>
+        )}
 
         {/* Share Link Banner for Multi-Party Participants */}
         <div className="px-4 py-2.5 bg-gradient-to-r from-emerald-950/80 via-slate-800 to-teal-950/80 border-b border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -667,7 +768,9 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
           <div className="flex-1 bg-black flex flex-col items-center justify-center relative overflow-hidden">
             
             {/* Dynamic Multi-Peer Video Grid */}
-            <div className="w-full h-full relative">
+            <div className={`w-full h-full relative flex items-center justify-center ${
+              isFullscreenPresentation && aspectFit === '16:9' ? 'max-w-[177.78vh] aspect-video my-auto mx-auto shadow-2xl' : ''
+            }`}>
               <VideoConferenceGrid
                 localStream={localStream}
                 localParticipant={localParticipant}
@@ -941,6 +1044,20 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
                 <MessageSquare className="w-5 h-5" />
               </button>
 
+              {/* Clinical Console Toggle */}
+              <button
+                type="button"
+                onClick={() => setShowClinicalConsole(!showClinicalConsole)}
+                className={`w-11 h-11 rounded-full flex items-center justify-center transition shadow-md ${
+                  showClinicalConsole 
+                    ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700' 
+                    : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-900/40'
+                }`}
+                title={showClinicalConsole ? 'ซ่อนแผงบันทึกเพื่อขยายวิดีโอเต็ม 16:9' : 'แสดงแผงประเมินคลินิก'}
+              >
+                <FileText className="w-5 h-5" />
+              </button>
+
               {/* End Call Button */}
               <button
                 type="button"
@@ -957,7 +1074,8 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
           </div>
 
           {/* Right: Doctor Clinical Console & Consultation Notes */}
-          <div className="w-full lg:w-96 bg-slate-850 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col h-full overflow-y-auto p-4 space-y-4 bg-slate-900">
+          {showClinicalConsole && (
+            <div className="w-full lg:w-96 bg-slate-850 border-t lg:border-t-0 lg:border-l border-slate-800 flex flex-col h-full overflow-y-auto p-4 space-y-4 bg-slate-900 shrink-0">
             
             {/* Patient Clinical Status Badge */}
             <div className="p-3 bg-slate-800/80 rounded-2xl border border-slate-700 space-y-2">
@@ -1091,6 +1209,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
             </div>
 
           </div>
+          )}
 
         </div>
 

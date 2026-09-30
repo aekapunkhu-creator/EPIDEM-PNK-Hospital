@@ -431,6 +431,9 @@ export const InvestigationManagement: React.FC<InvestigationManagementProps> = (
           } else {
             onAddInvestigation(record);
           }
+          if (printingRecord && printingRecord.id === record.id) {
+            setPrintingRecord(record);
+          }
         }}
         initialData={editingRecord}
         patients={patients}
@@ -448,6 +451,15 @@ export const InvestigationManagement: React.FC<InvestigationManagementProps> = (
         investigation={printingRecord}
         patient={patients.find(p => p.id === printingRecord?.patientId || p.hn === printingRecord?.hn)}
         contacts={printingRecord ? contacts.filter(c => c.indexPatientId === printingRecord.patientId || c.indexPatientHN === printingRecord.hn) : []}
+        onEdit={(record) => {
+          setIsPrintModalOpen(false);
+          setEditingRecord(record);
+          setIsFormModalOpen(true);
+        }}
+        onUpdateInvestigation={(record) => {
+          onUpdateInvestigation(record);
+          setPrintingRecord(record);
+        }}
       />
     </div>
   );

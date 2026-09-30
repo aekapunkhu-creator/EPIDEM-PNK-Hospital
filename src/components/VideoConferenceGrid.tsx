@@ -257,7 +257,7 @@ export const VideoConferenceGrid: React.FC<VideoConferenceGridProps> = ({
   // 2 Remote Streams (Total 3 participants)
   if (remoteStreams.length === 2) {
     return (
-      <div className={`w-full h-full p-2 sm:p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3 bg-slate-950 overflow-y-auto ${className}`}>
+      <div className={`w-full h-full p-2 sm:p-3 grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 bg-slate-950 min-h-0 ${className}`}>
         {remoteStreams.map((remote) => (
           <VideoTile
             key={remote.peerId}
@@ -267,7 +267,7 @@ export const VideoConferenceGrid: React.FC<VideoConferenceGridProps> = ({
             isVideoOff={remote.isVideoOff}
             networkQuality={remote.networkQuality || networkQuality}
             isLowBandwidth={isLowBandwidth}
-            className="h-56 sm:h-auto min-h-[220px]"
+            className="w-full h-full min-h-0"
             onClick={() => onTileClick && onTileClick(remote.peerId)}
           />
         ))}
@@ -282,15 +282,49 @@ export const VideoConferenceGrid: React.FC<VideoConferenceGridProps> = ({
           isLowBandwidth={isLowBandwidth}
           facingMode={facingMode}
           label={`${localParticipant.name} (ตัวคุณ)`}
-          className="h-56 sm:h-auto min-h-[220px]"
+          className="w-full h-full min-h-0"
         />
       </div>
     );
   }
 
-  // 3+ Remote Streams (Total 4+ participants)
+  // 3 Remote Streams (Total 4 participants - 2x2 Grid)
+  if (remoteStreams.length === 3) {
+    return (
+      <div className={`w-full h-full p-2 sm:p-3 grid grid-cols-2 grid-rows-2 gap-2 sm:gap-3 bg-slate-950 min-h-0 ${className}`}>
+        {remoteStreams.map((remote) => (
+          <VideoTile
+            key={remote.peerId}
+            stream={remote.stream}
+            participant={remote.participant}
+            isMuted={remote.isMuted}
+            isVideoOff={remote.isVideoOff}
+            networkQuality={remote.networkQuality || networkQuality}
+            isLowBandwidth={isLowBandwidth}
+            className="w-full h-full min-h-0"
+            onClick={() => onTileClick && onTileClick(remote.peerId)}
+          />
+        ))}
+        {/* Local Stream */}
+        <VideoTile
+          stream={localStream}
+          participant={localParticipant}
+          isLocal={true}
+          isMuted={isLocalMuted}
+          isVideoOff={isLocalVideoOff}
+          networkQuality={networkQuality}
+          isLowBandwidth={isLowBandwidth}
+          facingMode={facingMode}
+          label={`${localParticipant.name} (ตัวคุณ)`}
+          className="w-full h-full min-h-0"
+        />
+      </div>
+    );
+  }
+
+  // 4+ Remote Streams (Total 5+ participants)
   return (
-    <div className={`w-full h-full p-2 sm:p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3 bg-slate-950 overflow-y-auto ${className}`}>
+    <div className={`w-full h-full p-2 sm:p-3 grid grid-cols-2 sm:grid-cols-3 auto-rows-fr gap-2 sm:gap-3 bg-slate-950 min-h-0 overflow-y-auto ${className}`}>
       {remoteStreams.map((remote) => (
         <VideoTile
           key={remote.peerId}
@@ -300,7 +334,7 @@ export const VideoConferenceGrid: React.FC<VideoConferenceGridProps> = ({
           isVideoOff={remote.isVideoOff}
           networkQuality={remote.networkQuality || networkQuality}
           isLowBandwidth={isLowBandwidth}
-          className="h-48 sm:h-auto min-h-[200px]"
+          className="w-full h-full min-h-[160px]"
           onClick={() => onTileClick && onTileClick(remote.peerId)}
         />
       ))}
@@ -315,7 +349,7 @@ export const VideoConferenceGrid: React.FC<VideoConferenceGridProps> = ({
         isLowBandwidth={isLowBandwidth}
         facingMode={facingMode}
         label={`${localParticipant.name} (ตัวคุณ)`}
-        className="h-48 sm:h-auto min-h-[200px]"
+        className="w-full h-full min-h-[160px]"
       />
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Printer, 
   X, 
@@ -23,9 +23,16 @@ import {
   Award,
   Clock,
   Home,
-  CheckSquare
+  CheckSquare,
+  Edit3,
+  Download,
+  Maximize2,
+  Minimize2,
+  Save,
+  HelpCircle
 } from 'lucide-react';
 import { InvestigationRecord, Patient, HouseholdContact } from '../types';
+import { printElementIsolated, downloadPrintDocumentAsHtml } from '../utils/printHelper';
 
 interface InvestigationPrintModalProps {
   investigation: InvestigationRecord | null;
@@ -33,26 +40,67 @@ interface InvestigationPrintModalProps {
   contacts?: HouseholdContact[];
   isOpen: boolean;
   onClose: () => void;
+  onEdit?: (record: InvestigationRecord) => void;
+  onUpdateInvestigation?: (record: InvestigationRecord) => void;
 }
 
 export const InvestigationPrintModal: React.FC<InvestigationPrintModalProps> = ({
-  investigation,
+  investigation: propInvestigation,
   patient,
   contacts = [],
   isOpen,
-  onClose
+  onClose,
+  onEdit,
+  onUpdateInvestigation
 }) => {
   const [printLayout, setPrintLayout] = useState<'modern-digital' | 'official-standard' | 'summary-onepage'>('modern-digital');
   const [printTheme, setPrintTheme] = useState<'color' | 'grayscale'>('color');
+  
+  // Local state for editable investigation copy
+  const [currentInv, setCurrentInv] = useState<InvestigationRecord | null>(propInvestigation);
+  const [isWidescreenFit, setIsWidescreenFit] = useState<boolean>(false);
+  const [isQuickEditOpen, setIsQuickEditOpen] = useState<boolean>(false);
+  const [isPrinting, setIsPrinting] = useState<boolean>(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
 
-  if (!isOpen || !investigation) return null;
+  useEffect(() => {
+    if (propInvestigation) {
+      setCurrentInv(propInvestigation);
+    }
+  }, [propInvestigation]);
+
+  if (!isOpen || !currentInv) return null;
+  const investigation = currentInv;
 
   const handlePrint = () => {
-    window.print();
+    setIsPrinting(true);
+    const success = printElementIsolated('printable-investigation-document', {
+      title: `แบบสอบสวนโรควัณโรค_${currentInv.hn}_${currentInv.investigationNumber}`,
+      onAfterPrint: () => setIsPrinting(false)
+    });
+    if (!success) {
+      setIsPrinting(false);
+    }
+  };
+
+  const handleDownloadStandalone = () => {
+    downloadPrintDocumentAsHtml(
+      'printable-investigation-document',
+      `แบบสอบสวนโรค_${currentInv.hn}_${currentInv.firstName}`,
+      `แบบสอบสวนทางระบาดวิทยาผู้ป่วยวัณโรค - ${currentInv.prefix}${currentInv.firstName} ${currentInv.lastName}`
+    );
+  };
+
+  const handleQuickSave = () => {
+    if (onUpdateInvestigation && currentInv) {
+      onUpdateInvestigation(currentInv);
+      setSaveSuccessMsg('บันทึกการปรับปรุงข้อมูลเรียบร้อยแล้ว');
+      setTimeout(() => setSaveSuccessMsg(null), 3000);
+    }
   };
 
   // Helper for ID Card split into 13 boxes
-  const idCardString = (investigation.idCard || patient?.idCard || '               ').padEnd(13, ' ');
+  const idCardString = (currentInv.idCard || patient?.idCard || '               ').padEnd(13, ' ');
   const idCardDigits = idCardString.replace(/\D/g, '').padEnd(13, ' ').slice(0, 13).split('');
 
   // Helper for checkbox tag
@@ -70,13 +118,15 @@ export const InvestigationPrintModal: React.FC<InvestigationPrintModalProps> = (
   );
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/85 backdrop-blur-sm flex justify-center p-2 sm:p-4 print:p-0 print:bg-white print:static print:overflow-visible font-['Prompt',sans-serif]">
-      <div className="bg-white text-slate-900 w-full max-w-5xl rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto print:shadow-none print:rounded-none print:w-full print:max-w-none print:my-0 border border-slate-200">
+    <div className={`fixed inset-0 z-50 overflow-y-auto bg-slate-900/90 backdrop-blur-md flex justify-center p-2 sm:p-4 print:p-0 print:bg-white print:static print:overflow-visible font-['Prompt',sans-serif] ${isWidescreenFit ? 'p-1 sm:p-2' : ''}`}>
+      <div className={`bg-white text-slate-900 w-full rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto print:shadow-none print:rounded-none print:w-full print:max-w-none print:my-0 border border-slate-200 transition-all duration-300 ${
+        isWidescreenFit ? 'max-w-[98vw] max-h-[96vh]' : 'max-w-5xl'
+      }`}>
         
         {/* Modal Toolbar - Hidden during print */}
-        <div className="bg-slate-900 text-white px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 print:hidden">
+        <div className="bg-slate-900 text-white px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 print:hidden shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-900/40">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-900/40 shrink-0">
               <FileText className="w-5 h-5 text-white" />
             </div>
             <div>
@@ -85,9 +135,14 @@ export const InvestigationPrintModal: React.FC<InvestigationPrintModalProps> = (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                   SMART TB CARE 4.0
                 </span>
+                {isWidescreenFit && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                    16:9 Widescreen Fit
+                  </span>
+                )}
               </h3>
               <p className="text-xs text-slate-400">
-                ผู้ป่วย: <span className="text-white font-medium">{investigation.prefix}{investigation.firstName} {investigation.lastName}</span> (HN: <span className="font-mono text-emerald-400">{investigation.hn}</span>) &bull; เลขที่: {investigation.investigationNumber}
+                ผู้ป่วย: <span className="text-white font-medium">{currentInv.prefix}{currentInv.firstName} {currentInv.lastName}</span> (HN: <span className="font-mono text-emerald-400">{currentInv.hn}</span>) &bull; เลขที่: {currentInv.investigationNumber}
               </p>
             </div>
           </div>
@@ -105,7 +160,7 @@ export const InvestigationPrintModal: React.FC<InvestigationPrintModalProps> = (
                 }`}
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>โมเดิร์นคลินิก (Smart Hospital)</span>
+                <span>โมเดิร์นคลินิก</span>
               </button>
               <button
                 type="button"
@@ -117,7 +172,7 @@ export const InvestigationPrintModal: React.FC<InvestigationPrintModalProps> = (
                 }`}
               >
                 <Building2 className="w-3.5 h-3.5" />
-                <span>แบบฟอร์มราชการ รง.506</span>
+                <span>แบบฟอร์มราชการ</span>
               </button>
               <button
                 type="button"
@@ -129,17 +184,72 @@ export const InvestigationPrintModal: React.FC<InvestigationPrintModalProps> = (
                 }`}
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span>สรุป 1 หน้า (One-Page)</span>
+                <span>สรุป 1 หน้า</span>
               </button>
             </div>
 
-            {/* Print Button */}
+            {/* Quick Inline Edit Toggle */}
             <button
+              type="button"
+              onClick={() => setIsQuickEditOpen(!isQuickEditOpen)}
+              className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition ${
+                isQuickEditOpen 
+                  ? 'bg-amber-500 text-slate-950 border-amber-400 font-bold' 
+                  : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-amber-500/40'
+              }`}
+              title="แก้ไขข้อมูลผู้สอบสวนหรือสรุปผลก่อนพิมพ์"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+              <span>{isQuickEditOpen ? 'ปิดการแก้ไขด่วน' : 'ปรับแก้ไขด่วน'}</span>
+            </button>
+
+            {/* Full Form Edit Button */}
+            {onEdit && (
+              <button
+                type="button"
+                onClick={() => onEdit(currentInv)}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
+                title="เปิดแบบฟอร์มแก้ไขข้อมูลทั้งหมด 7 ส่วน"
+              >
+                <FileText className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">แก้ไขทั้งฟอร์ม</span>
+              </button>
+            )}
+
+            {/* Widescreen 16:9 Fit Toggle */}
+            <button
+              type="button"
+              onClick={() => setIsWidescreenFit(!isWidescreenFit)}
+              className={`p-2 rounded-xl text-xs font-medium border transition ${
+                isWidescreenFit
+                  ? 'bg-cyan-600 text-white border-cyan-400'
+                  : 'bg-slate-800 text-slate-300 hover:text-white border-slate-700'
+              }`}
+              title={isWidescreenFit ? 'ออกจากโหมดขยายเต็มหน้าจอ' : 'ขยายเต็มหน้าจอ 16:9'}
+            >
+              {isWidescreenFit ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+
+            {/* Save / Download as HTML or PDF File */}
+            <button
+              type="button"
+              onClick={handleDownloadStandalone}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl border border-slate-700 transition"
+              title="บันทึกเป็นไฟล์เอกสารเปิดพิมพ์ได้อิสระ"
+            >
+              <Download className="w-4 h-4 text-cyan-400" />
+              <span className="hidden md:inline">ดาวน์โหลดไฟล์</span>
+            </button>
+
+            {/* Primary Print / Save as PDF Button */}
+            <button
+              type="button"
               onClick={handlePrint}
-              className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-emerald-950 transition active:scale-95 cursor-pointer"
+              disabled={isPrinting}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-emerald-950 transition active:scale-95 cursor-pointer disabled:opacity-50"
             >
               <Printer className="w-4 h-4" />
-              <span>พิมพ์เอกสาร / บันทึกเป็น PDF</span>
+              <span>{isPrinting ? 'กำลังพิมพ์...' : 'พิมพ์เอกสาร / บันทึกเป็น PDF'}</span>
             </button>
 
             <button
@@ -152,8 +262,113 @@ export const InvestigationPrintModal: React.FC<InvestigationPrintModalProps> = (
           </div>
         </div>
 
+        {/* Quick Edit Drawer Banner */}
+        {isQuickEditOpen && (
+          <div className="bg-amber-50 border-b border-amber-200 px-6 py-4 text-slate-900 print:hidden animate-fadeIn shrink-0">
+            <div className="flex items-center justify-between pb-2 mb-3 border-b border-amber-200">
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-900">
+                <Edit3 className="w-4 h-4 text-amber-700" />
+                <span>ปรับแก้ไขข้อมูลอย่างรวดเร็วก่อนสั่งพิมพ์ / บันทึก PDF:</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {saveSuccessMsg && (
+                  <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
+                    {saveSuccessMsg}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={handleQuickSave}
+                  className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-sm"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>บันทึกการแก้ไข</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">ชื่อ-สกุล ผู้สอบสวนโรค</label>
+                <input
+                  type="text"
+                  value={currentInv.investigatorName || ''}
+                  onChange={e => setCurrentInv({ ...currentInv, investigatorName: e.target.value })}
+                  className="w-full bg-white border border-amber-300 rounded px-2.5 py-1 text-xs focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">ตำแหน่ง / บทบาท</label>
+                <input
+                  type="text"
+                  value={currentInv.investigatorRole || ''}
+                  onChange={e => setCurrentInv({ ...currentInv, investigatorRole: e.target.value })}
+                  className="w-full bg-white border border-amber-300 rounded px-2.5 py-1 text-xs focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">หน่วยงานที่สอบสวน</label>
+                <input
+                  type="text"
+                  value={currentInv.investigatorUnit || ''}
+                  onChange={e => setCurrentInv({ ...currentInv, investigatorUnit: e.target.value })}
+                  className="w-full bg-white border border-amber-300 rounded px-2.5 py-1 text-xs focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">เบอร์โทรศัพท์ติดต่อ</label>
+                <input
+                  type="text"
+                  value={currentInv.investigatorPhone || ''}
+                  onChange={e => setCurrentInv({ ...currentInv, investigatorPhone: e.target.value })}
+                  className="w-full bg-white border border-amber-300 rounded px-2.5 py-1 text-xs focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">สรุปผลการสอบสวนโรคทางระบาดวิทยา</label>
+                <textarea
+                  rows={2}
+                  value={currentInv.investigationSummary || ''}
+                  onChange={e => setCurrentInv({ ...currentInv, investigationSummary: e.target.value })}
+                  className="w-full bg-white border border-amber-300 rounded px-2.5 py-1 text-xs focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">มาตรการควบคุมโรคและการป้องกันในพื้นที่</label>
+                <textarea
+                  rows={2}
+                  value={currentInv.controlMeasuresTaken || ''}
+                  onChange={e => setCurrentInv({ ...currentInv, controlMeasuresTaken: e.target.value })}
+                  className="w-full bg-white border border-amber-300 rounded px-2.5 py-1 text-xs focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tip Banner for Saving as PDF */}
+        <div className="bg-emerald-50/70 border-b border-emerald-200/60 px-6 py-2 text-[11px] text-emerald-900 flex items-center justify-between print:hidden shrink-0">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span>
+              <strong>วิธีบันทึกเป็น PDF:</strong> กดปุ่ม "พิมพ์เอกสาร / บันทึกเป็น PDF" &rarr; ในหน้าต่างการพิมพ์ ให้เลือกช่องปลายทาง (Destination) เป็น <strong>"บันทึกเป็น PDF (Save as PDF)"</strong> &rarr; กด "บันทึก"
+            </span>
+          </div>
+          <span className="text-[10px] text-emerald-700 font-mono hidden md:inline">
+            มาตรฐานแบบพิมพ์ A4 กระทรวงสาธารณสุข
+          </span>
+        </div>
+
         {/* Printable Document Container */}
-        <div className="p-6 sm:p-8 space-y-4 text-slate-900 bg-white print:p-0 print:space-y-0 text-[12px] leading-relaxed">
+        <div 
+          id="printable-investigation-document"
+          className="p-6 sm:p-8 space-y-4 text-slate-900 bg-white print:p-0 print:space-y-0 text-[12px] leading-relaxed overflow-y-auto flex-1"
+        >
 
           {/* ========================================================================= */}
           {/* LAYOUT 1: MODERN DIGITAL CLINICAL REPORT (SMART HOSPITAL) */}
@@ -162,7 +377,7 @@ export const InvestigationPrintModal: React.FC<InvestigationPrintModalProps> = (
             <div className="space-y-4">
               
               {/* PAGE 1 CONTAINER */}
-              <div className="print-page border border-slate-200 rounded-2xl p-5 sm:p-6 mb-6 print:border-none print:p-0 print:mb-0 print:break-after-page bg-white shadow-sm">
+              <div className="print-page border border-slate-200 rounded-2xl p-5 sm:p-6 mb-6 print:border-none print:p-0 print:mb-0 print-break-after-page bg-white shadow-sm">
                 
                 {/* Modern Brand Header */}
                 <div className="flex items-start justify-between border-b-2 border-emerald-600/30 pb-4 mb-4">

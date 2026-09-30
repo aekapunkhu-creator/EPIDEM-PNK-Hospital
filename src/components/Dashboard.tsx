@@ -5,11 +5,12 @@ import {
   UserPlus, Search, ArrowUpRight, 
   Calendar, CheckSquare, Sparkles, Send,
   Microscope, Network, BarChart3, ShieldAlert, HeartPulse, Clock,
-  Building2, Home
+  Building2, Home, Tv, Maximize2
 } from 'lucide-react';
 import { EpidemiologicalAnalysis } from './EpidemiologicalAnalysis';
 import { EpidemiologicalLinkage } from './EpidemiologicalLinkage';
 import { SubdistrictVillageAnalysis } from './SubdistrictVillageAnalysis';
+import { DashboardPresentationModal } from './DashboardPresentationModal';
 
 interface DashboardProps {
   patients: Patient[];
@@ -36,6 +37,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
 }) => {
   // Sub-view Tab inside Dashboard
   const [dashboardMode, setDashboardMode] = useState<'overview' | 'epidemiology' | 'villages' | 'linkage'>('overview');
+  const [isPresentationOpen, setIsPresentationOpen] = useState<boolean>(false);
 
   // Key Metrics
   const totalPatients = patients.length;
@@ -90,6 +92,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
         <div className="flex flex-wrap items-center gap-2 self-stretch md:self-auto">
           <button
+            onClick={() => setIsPresentationOpen(true)}
+            className="flex-1 md:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-teal-400 to-cyan-400 hover:from-teal-300 hover:to-cyan-300 text-slate-950 font-bold text-xs shadow-md transition"
+            title="เปิดโหมดนำเสนอเต็มหน้าจอ 16:9 เหมาะสำหรับต่อโปรเจกเตอร์หรือทีวีห้องประชุม"
+          >
+            <Tv className="w-4 h-4 text-slate-950" />
+            <span>เต็มหน้าจอ 16:9 (Presentation Fit)</span>
+          </button>
+
+          <button
             onClick={onOpenNewPatient}
             className="flex-1 md:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-500 text-slate-950 font-semibold text-xs shadow-md hover:bg-emerald-400 transition"
           >
@@ -108,53 +119,64 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* Mode Navigation Tabs */}
-      <div className="flex items-center gap-2 p-1.5 bg-slate-200/70 rounded-2xl w-full sm:w-fit overflow-x-auto">
-        <button
-          onClick={() => setDashboardMode('overview')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${
-            dashboardMode === 'overview'
-              ? 'bg-white text-slate-900 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4 text-emerald-600" />
-          <span>ภาพรวมการดูแลรักษา DOTS</span>
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 p-1.5 bg-slate-200/70 rounded-2xl w-full sm:w-fit overflow-x-auto">
+          <button
+            onClick={() => setDashboardMode('overview')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${
+              dashboardMode === 'overview'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-emerald-600" />
+            <span>ภาพรวมการดูแลรักษา DOTS</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardMode('epidemiology')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${
+              dashboardMode === 'epidemiology'
+                ? 'bg-white text-emerald-950 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+            }`}
+          >
+            <Microscope className="w-4 h-4 text-emerald-600" />
+            <span>บทวิเคราะห์ทางระบาดวิทยา ({investigations.length})</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardMode('villages')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${
+              dashboardMode === 'villages'
+                ? 'bg-white text-emerald-950 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+            }`}
+          >
+            <Building2 className="w-4 h-4 text-emerald-600" />
+            <span>วิเคราะห์รายตำบล-หมู่บ้าน (5 ตำบล 53 หมู่บ้าน)</span>
+          </button>
+
+          <button
+            onClick={() => setDashboardMode('linkage')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${
+              dashboardMode === 'linkage'
+                ? 'bg-white text-emerald-950 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
+            }`}
+          >
+            <Network className="w-4 h-4 text-emerald-600" />
+            <span>ผังความเชื่อมโยงการแพร่กระจายเชื้อ (Clusters)</span>
+          </button>
+        </div>
 
         <button
-          onClick={() => setDashboardMode('epidemiology')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${
-            dashboardMode === 'epidemiology'
-              ? 'bg-white text-emerald-950 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
-          }`}
+          onClick={() => setIsPresentationOpen(true)}
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-cyan-500/30 text-xs font-bold shadow-sm transition"
+          title="เปิดโหมดนำเสนอเต็มหน้าจอ 16:9 เหมาะสำหรับต่อจอโปรเจกเตอร์"
         >
-          <Microscope className="w-4 h-4 text-emerald-600" />
-          <span>บทวิเคราะห์ทางระบาดวิทยา ({investigations.length})</span>
-        </button>
-
-        <button
-          onClick={() => setDashboardMode('villages')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${
-            dashboardMode === 'villages'
-              ? 'bg-white text-emerald-950 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
-          }`}
-        >
-          <Building2 className="w-4 h-4 text-emerald-600" />
-          <span>วิเคราะห์รายตำบล-หมู่บ้าน (5 ตำบล 53 หมู่บ้าน)</span>
-        </button>
-
-        <button
-          onClick={() => setDashboardMode('linkage')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap ${
-            dashboardMode === 'linkage'
-              ? 'bg-white text-emerald-950 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/50'
-          }`}
-        >
-          <Network className="w-4 h-4 text-emerald-600" />
-          <span>ผังความเชื่อมโยงการแพร่กระจายเชื้อ (Clusters)</span>
+          <Tv className="w-3.5 h-3.5 text-cyan-400" />
+          <span>โหมดนำเสนอ 16:9</span>
         </button>
       </div>
 
@@ -513,6 +535,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
           onNavigateToContacts={() => onNavigate('contacts')}
         />
       )}
+
+      {/* Fullscreen 16:9 Presentation Modal */}
+      <DashboardPresentationModal
+        isOpen={isPresentationOpen}
+        onClose={() => setIsPresentationOpen(false)}
+        patients={patients}
+        contacts={contacts}
+        investigations={investigations}
+        subdistricts={subdistricts}
+      />
 
     </div>
   );

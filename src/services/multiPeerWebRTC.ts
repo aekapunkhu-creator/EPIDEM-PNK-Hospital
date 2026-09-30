@@ -95,7 +95,52 @@ export class MultiPeerWebRTCManager {
     this.localParticipant = localParticipant;
   }
 
-  // 1. Start Local Media with optimized, resilient constraints
+  // Helper to create a dummy silent stream when no physical camera/mic is present
+  createDummyMediaStream(): MediaStream {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(this.localParticipant.name || 'ผู้ใช้งาน', 320, 220);
+        ctx.font = '16px sans-serif';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(this.localParticipant.roleTitle || 'โหมดรับชม / ไม่มีกล้อง', 320, 260);
+      }
+      const stream = canvas.captureStream ? canvas.captureStream(10) : new MediaStream();
+
+      // Create a silent audio track using Web Audio API if supported
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const audioCtx = new AudioCtx();
+          const dest = audioCtx.createMediaStreamDestination();
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          gain.gain.value = 0; // Completely silent
+          osc.connect(gain);
+          gain.connect(dest);
+          osc.start();
+          dest.stream.getAudioTracks().forEach(track => stream.addTrack(track));
+        }
+      } catch (audioErr) {
+        console.warn('AudioContext dummy track creation warning:', audioErr);
+      }
+
+      return stream;
+    } catch (e) {
+      console.warn('Canvas stream capture fallback warning:', e);
+      return new MediaStream();
+    }
+  }
+
+  // 1. Start Local Media with optimized, resilient constraints and full fallback hierarchy
   async startLocalMedia(
     video = true, 
     audio = true, 
@@ -106,58 +151,121 @@ export class MultiPeerWebRTCManager {
     this.qualityMode = quality;
     this.isAudioOnlyMode = !video;
 
-    const videoConstraints = this.getVideoConstraints(quality, facingMode);
+    // Check if mediaDevices API is available
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      console.warn('navigator.mediaDevices.getUserMedia is not supported on this environment, using dummy stream');
+      const dummy = this.createDummyMediaStream();
+      this.localStream = dummy;
+      return dummy;
+    }
 
+    // Check what devices physically exist
+    let hasVideoInput = true;
+    let hasAudioInput = true;
     try {
-      const constraints: MediaStreamConstraints = {
-        video: video ? videoConstraints : false,
-        audio: audio ? {
+      if (typeof navigator.mediaDevices.enumerateDevices === 'function') {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevs = devices.filter(d => d.kind === 'videoinput');
+        const audioDevs = devices.filter(d => d.kind === 'audioinput');
+        if (devices.length > 0) {
+          hasVideoInput = videoDevs.length > 0;
+          hasAudioInput = audioDevs.length > 0;
+        }
+      }
+    } catch (e) {
+      console.warn('Device enumeration error (ignored):', e);
+    }
+
+    const wantVideo = video && hasVideoInput;
+    const wantAudio = audio && hasAudioInput;
+
+    // If device physically lacks both camera and microphone, directly create dummy stream
+    if (!wantVideo && !wantAudio) {
+      console.warn('No videoinput or audioinput devices found on system, using dummy media stream');
+      const dummyStream = this.createDummyMediaStream();
+      this.localStream = dummyStream;
+      this.isAudioOnlyMode = true;
+      this.syncTracksToAllPeers();
+      return dummyStream;
+    }
+
+    // Step 1: Try optimal constraints
+    const videoConstraints = this.getVideoConstraints(quality, facingMode);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: wantVideo ? videoConstraints : false,
+        audio: wantAudio ? {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
           sampleRate: 48000,
-          channelCount: 1 // Mono is best for low bandwidth speech clarity
+          channelCount: 1
         } : false
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      });
       this.localStream = stream;
       this.syncTracksToAllPeers();
       this.applySenderBitrateLimits();
       this.startStatsMonitoring();
       return stream;
-    } catch (err) {
-      console.warn('Optimal media constraints failed, falling back to low bandwidth mode:', err);
+    } catch (err1) {
+      console.warn('Optimal media constraints failed, attempting relaxed constraints:', err1);
+    }
+
+    // Step 2: Try relaxed / generic constraints (without resolution or facingMode locks)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: wantVideo,
+        audio: wantAudio ? { echoCancellation: true } : false
+      });
+      this.localStream = stream;
+      this.syncTracksToAllPeers();
+      this.applySenderBitrateLimits();
+      this.startStatsMonitoring();
+      return stream;
+    } catch (err2) {
+      console.warn('Relaxed constraints failed, attempting single-track fallbacks:', err2);
+    }
+
+    // Step 3: Try audio only if audio is available
+    if (wantAudio) {
       try {
-        // Fallback to low-res video (QVGA / 15fps)
-        const fallbackStream = await navigator.mediaDevices.getUserMedia({
-          video: video ? {
-            facingMode,
-            width: { ideal: 480, max: 640 },
-            height: { ideal: 360, max: 480 },
-            frameRate: { ideal: 15, max: 20 }
-          } : false,
-          audio: audio ? { echoCancellation: true, noiseSuppression: true } : false
-        });
-        this.localStream = fallbackStream;
-        this.qualityMode = 'low';
-        this.syncTracksToAllPeers();
-        this.applySenderBitrateLimits();
-        this.startStatsMonitoring();
-        return fallbackStream;
-      } catch (err2) {
-        console.warn('Standard fallback failed, switching to ultra-stable audio only:', err2);
         const audioOnlyStream = await navigator.mediaDevices.getUserMedia({
           video: false,
-          audio: { echoCancellation: true, noiseSuppression: true }
+          audio: true
         });
         this.localStream = audioOnlyStream;
         this.isAudioOnlyMode = true;
         this.syncTracksToAllPeers();
         this.startStatsMonitoring();
         return audioOnlyStream;
+      } catch (errAudio) {
+        console.warn('Audio-only fallback failed:', errAudio);
       }
     }
+
+    // Step 4: Try video only if video is available
+    if (wantVideo) {
+      try {
+        const videoOnlyStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false
+        });
+        this.localStream = videoOnlyStream;
+        this.syncTracksToAllPeers();
+        this.startStatsMonitoring();
+        return videoOnlyStream;
+      } catch (errVideo) {
+        console.warn('Video-only fallback failed:', errVideo);
+      }
+    }
+
+    // Step 5: Ultimate fallback - return dummy stream so the call NEVER crashes!
+    console.warn('All physical media devices unavailable or blocked, falling back to dummy MediaStream');
+    const dummyFallback = this.createDummyMediaStream();
+    this.localStream = dummyFallback;
+    this.isAudioOnlyMode = true;
+    this.syncTracksToAllPeers();
+    return dummyFallback;
   }
 
   private getVideoConstraints(quality: VideoQualityMode, facingMode: 'user' | 'environment'): MediaTrackConstraints {

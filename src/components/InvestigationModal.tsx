@@ -49,10 +49,9 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
 }) => {
   const [activeSection, setActiveSection] = useState<number>(1);
   const [selectedPatientId, setSelectedPatientId] = useState<string>('');
+  const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Form State
-  const [formData, setFormData] = useState<InvestigationRecord>(() => {
-    if (initialData) return initialData;
+  const getFreshInvestigation = (): InvestigationRecord => {
     const now = new Date().toISOString().split('T')[0];
     return {
       id: 'INV-' + Date.now(),
@@ -173,17 +172,29 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
+  };
+
+  // Form State
+  const [formData, setFormData] = useState<InvestigationRecord>(() => {
+    if (initialData) return initialData;
+    return getFreshInvestigation();
   });
 
-  // Sync initialData when changes
+  // Sync initialData when changes or opens
   useEffect(() => {
-    if (initialData) {
-      setFormData(initialData);
-      if (initialData.patientId) {
-        setSelectedPatientId(initialData.patientId);
+    if (isOpen) {
+      setValidationError(null);
+      if (initialData) {
+        setFormData(initialData);
+        if (initialData.patientId) {
+          setSelectedPatientId(initialData.patientId);
+        }
+      } else {
+        setFormData(getFreshInvestigation());
+        setSelectedPatientId('');
       }
     }
-  }, [initialData]);
+  }, [initialData, isOpen]);
 
   if (!isOpen) return null;
 
@@ -223,10 +234,12 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.hn || !formData.firstName || !formData.lastName) {
-      alert('กรุณากรอก HN และชื่อ-สกุลผู้ป่วยให้ครบถ้วน');
+      setValidationError('กรุณากรอก HN และชื่อ-สกุลผู้ป่วยให้ครบถ้วนในส่วนที่ 1 ก่อนทำการบันทึก');
+      setActiveSection(1);
       return;
     }
 
+    setValidationError(null);
     const updated: InvestigationRecord = {
       ...formData,
       updatedAt: new Date().toISOString()
@@ -287,6 +300,14 @@ export const InvestigationModal: React.FC<InvestigationModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Validation Error Banner */}
+        {validationError && (
+          <div className="bg-red-50 border-b border-red-200 px-6 py-2.5 flex items-center gap-2 text-xs font-semibold text-red-700 animate-fadeIn">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+            <span>{validationError}</span>
+          </div>
+        )}
 
         {/* Quick Auto-fill from Registered Patients */}
         {!initialData && (

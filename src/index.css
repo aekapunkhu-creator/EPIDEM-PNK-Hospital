@@ -18,12 +18,22 @@
     break-inside: avoid;
   }
 
-  .print\:break-after-page {
-    page-break-after: always;
-    break-after: page;
+  .print\:break-after-page,
+  .print-break-after-page {
+    page-break-after: always !important;
+    break-after: page !important;
   }
 
-  /* Hide everything else during printing if needed */
+  /* When printing an isolated document modal */
+  body:has(#printable-investigation-document) header,
+  body:has(#printable-investigation-document) nav,
+  body:has(#printable-investigation-document) main,
+  body:has(#printable-investigation-document) footer,
+  body:has(#printable-investigation-document) aside {
+    display: none !important;
+  }
+
+  /* Fallback hide controls */
   header, nav, aside {
     display: none !important;
   }

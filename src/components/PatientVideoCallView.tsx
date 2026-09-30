@@ -24,7 +24,7 @@ import {
   SwitchCamera, MessageSquare, Send, HeartPulse, Building2, 
   ShieldCheck, AlertCircle, CheckCircle2, Check,
   Users, Volume2, User, UserCheck, Stethoscope,
-  Wifi, WifiOff, Zap, RefreshCw
+  Wifi, WifiOff, Zap, RefreshCw, Maximize2, Minimize2
 } from 'lucide-react';
 
 interface PatientVideoCallViewProps {
@@ -73,6 +73,18 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
   });
   const [isReconnecting, setIsReconnecting] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [aspectFit, setAspectFit] = useState<'16:9' | 'fill'>('16:9');
+
+  const handleToggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().catch(() => {});
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+      setIsFullscreen(false);
+    }
+  };
 
   // References
   const webrtcManagerRef = useRef<MultiPeerWebRTCManager | null>(null);
@@ -189,7 +201,13 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
       }
 
       // Start local camera/mic with balanced quality
-      const stream = await webrtcManagerRef.current.startLocalMedia(true, true, facingMode, qualityMode);
+      let stream: MediaStream | null = null;
+      try {
+        stream = await webrtcManagerRef.current.startLocalMedia(true, true, facingMode, qualityMode);
+      } catch (mediaErr: any) {
+        console.warn('Initial patient startLocalMedia caught error, falling back to dummy stream:', mediaErr);
+        stream = webrtcManagerRef.current.createDummyMediaStream();
+      }
       setLocalStream(stream);
       setHasStartedMedia(true);
 
@@ -259,7 +277,12 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
       manager.onRemoteStreamsChange((streams) => setRemoteStreams([...streams]));
       manager.onParticipantsChange((pList) => setParticipants([...pList]));
 
-      const stream = await manager.startLocalMedia(!isVideoOff, !isMuted, facingMode);
+      let stream: MediaStream | null = null;
+      try {
+        stream = await manager.startLocalMedia(!isVideoOff, !isMuted, facingMode);
+      } catch (err: any) {
+        stream = manager.createDummyMediaStream();
+      }
       setLocalStream(stream);
       await manager.joinRoom();
     }
@@ -464,6 +487,26 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
 
         {/* Live status badge, participants & Timer */}
         <div className="flex items-center gap-2">
+          {/* Fullscreen 16:9 Presentation Fit Button */}
+          <button
+            onClick={handleToggleFullscreen}
+            className="p-1.5 sm:px-2.5 sm:py-1.5 bg-slate-900/80 hover:bg-slate-800 border border-white/20 rounded-xl text-xs font-bold text-white transition flex items-center gap-1.5"
+            title={isFullscreen ? 'ย่อหน้าต่าง' : 'เต็มหน้าจอพอดี 16:9 (Fullscreen Fit)'}
+          >
+            {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />}
+            <span className="hidden sm:inline">{isFullscreen ? 'ย่อจอ' : '16:9 พอดีจอ'}</span>
+          </button>
+
+          {isFullscreen && (
+            <button
+              onClick={() => setAspectFit(aspectFit === '16:9' ? 'fill' : '16:9')}
+              className="px-2 py-1 bg-slate-900/80 hover:bg-slate-800 border border-white/20 rounded-xl text-[11px] font-medium text-slate-300 transition"
+              title="สลับสัดส่วนวิดีโอ"
+            >
+              <span>{aspectFit === '16:9' ? '16:9' : 'Fill'}</span>
+            </button>
+          )}
+
           {isConnected ? (
             <button
               onClick={() => setShowParticipantsList(!showParticipantsList)}
@@ -484,14 +527,18 @@ export const PatientVideoCallView: React.FC<PatientVideoCallViewProps> = ({
       {/* Main Multi-Peer Video Grid Viewport */}
       <div className="relative flex-1 bg-slate-950 flex items-center justify-center overflow-hidden">
         
-        <VideoConferenceGrid
-          localStream={localStream}
-          localParticipant={currentLocalParticipant}
-          remoteStreams={remoteStreams}
-          isLocalMuted={isMuted}
-          isLocalVideoOff={isVideoOff}
-          facingMode={facingMode}
-        />
+        <div className={`w-full h-full relative flex items-center justify-center ${
+          aspectFit === '16:9' ? 'max-w-[177.78vh] aspect-video my-auto mx-auto shadow-2xl' : ''
+        }`}>
+          <VideoConferenceGrid
+            localStream={localStream}
+            localParticipant={currentLocalParticipant}
+            remoteStreams={remoteStreams}
+            isLocalMuted={isMuted}
+            isLocalVideoOff={isVideoOff}
+            facingMode={facingMode}
+          />
+        </div>
 
         {/* Placeholder if waiting for other participants */}
         {!isConnected && (
