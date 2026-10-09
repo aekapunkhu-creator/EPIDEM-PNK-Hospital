@@ -562,7 +562,7 @@ export const DoctorVideoCallModal: React.FC<DoctorVideoCallModalProps> = ({
       <div className={`bg-slate-900 flex flex-col text-white transition-all duration-300 ${
         isFullscreenPresentation 
           ? 'w-full h-full rounded-none border-none max-w-none shadow-none overflow-hidden' 
-          : 'border border-slate-700 rounded-3xl w-full max-w-6xl h-[94vh] shadow-2xl overflow-hidden'
+          : 'border border-slate-700 rounded-3xl w-full max-w-[1840px] 2xl:max-w-[1900px] h-[95vh] shadow-2xl overflow-hidden'
       }`}>
         
         {/* Modal Header */}

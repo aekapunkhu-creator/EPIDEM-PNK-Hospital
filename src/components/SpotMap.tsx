@@ -8,6 +8,7 @@ import {
   useMap 
 } from '@vis.gl/react-google-maps';
 import { LeafletSpotMap } from './LeafletSpotMap';
+import { useGoogleMapsKey } from '../utils/googleMaps';
 import { 
   MapPin, Filter, Layers, Phone, Send, Info, Eye, Share2, 
   ExternalLink, Compass, CheckCircle2, AlertTriangle, ShieldCheck, Sparkles
@@ -50,7 +51,7 @@ export const SpotMap: React.FC<SpotMapProps> = ({
   onSelectPatient,
   onOpenShareLocationModal
 }) => {
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+  const { apiKey, isValid: hasValidGmpKey } = useGoogleMapsKey();
 
   // Filters
   const [selectedSubdistrict, setSelectedSubdistrict] = useState<string>('all');
@@ -94,7 +95,7 @@ export const SpotMap: React.FC<SpotMapProps> = ({
     : [];
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-4 font-['Prompt',sans-serif]">
+    <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1920px] w-full mx-auto space-y-4 font-['Prompt',sans-serif]">
       
       {/* Top Filter Bar */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
@@ -107,7 +108,7 @@ export const SpotMap: React.FC<SpotMapProps> = ({
               <h2 className="text-base font-bold text-slate-900">
                 SpotMap แผนที่พิกัดระบาดวิทยาวัณโรค อ.โพนนาแก้ว
               </h2>
-              {apiKey && apiKey.trim() !== '' ? (
+              {hasValidGmpKey ? (
                 <span className="text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full flex items-center gap-1">
                   Google Maps Platform
                 </span>
@@ -175,8 +176,8 @@ export const SpotMap: React.FC<SpotMapProps> = ({
         
         {/* Map Container */}
         <div className="lg:col-span-3 bg-white rounded-2xl border border-slate-200/80 p-2 shadow-sm relative overflow-hidden flex flex-col">
-          <div className="w-full h-[540px] rounded-xl overflow-hidden relative">
-            {apiKey && apiKey.trim() !== '' ? (
+          <div className="w-full h-[580px] 2xl:h-[720px] rounded-xl overflow-hidden relative">
+            {hasValidGmpKey ? (
               <APIProvider apiKey={apiKey} language="th" region="TH">
                 <Map
                   id="spot-map-main"

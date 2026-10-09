@@ -120,7 +120,7 @@ export const InvestigationPrintModal: React.FC<InvestigationPrintModalProps> = (
   return (
     <div className={`fixed inset-0 z-50 overflow-y-auto bg-slate-900/90 backdrop-blur-md flex justify-center p-2 sm:p-4 print:p-0 print:bg-white print:static print:overflow-visible font-['Prompt',sans-serif] ${isWidescreenFit ? 'p-1 sm:p-2' : ''}`}>
       <div className={`bg-white text-slate-900 w-full rounded-3xl shadow-2xl overflow-hidden flex flex-col my-auto print:shadow-none print:rounded-none print:w-full print:max-w-none print:my-0 border border-slate-200 transition-all duration-300 ${
-        isWidescreenFit ? 'max-w-[98vw] max-h-[96vh]' : 'max-w-5xl'
+        isWidescreenFit ? 'max-w-[98vw] max-h-[96vh]' : 'max-w-5xl 2xl:max-w-6xl'
       }`}>
         
         {/* Modal Toolbar - Hidden during print */}

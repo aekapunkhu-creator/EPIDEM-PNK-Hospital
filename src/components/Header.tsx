@@ -3,10 +3,11 @@ import { LayoutDashboard, MapPin, Users, UserCheck, Bell, FileSpreadsheet, Shiel
 import { UserAccount } from '../types';
 
 interface HeaderProps {
-  activeTab: 'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas';
-  setActiveTab: (tab: 'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas') => void;
+  activeTab: 'dashboard' | 'spotmap' | 'tbcxr-screenings' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas';
+  setActiveTab: (tab: 'dashboard' | 'spotmap' | 'tbcxr-screenings' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas') => void;
   patientsCount: number;
   contactsCount: number;
+  tbcxrScreeningsCount?: number;
   investigationsCount?: number;
   homeVisitsCount?: number;
   videoCallsCount?: number;
@@ -24,6 +25,7 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   patientsCount,
   contactsCount,
+  tbcxrScreeningsCount = 0,
   investigationsCount = 0,
   homeVisitsCount = 0,
   videoCallsCount = 0,
@@ -38,71 +40,73 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="bg-slate-900 text-white shadow-lg sticky top-0 z-40">
       {/* Top Banner */}
-      <div className="bg-emerald-700 text-emerald-50 px-4 py-1.5 text-xs font-medium flex flex-wrap items-center justify-between border-b border-emerald-600/30">
-        <div className="flex items-center gap-2">
-          <span className="bg-emerald-900/60 text-emerald-200 px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase">
-            ระบาดวิทยา โรงพยาบาลโพนนาแก้ว
-          </span>
-          <span className="hidden sm:inline">ระบบสารสนเทศคัดกรอง รักษา ติดตาม และควบคุมโรควัณโรคระดับพื้นที่</span>
-          <span className="bg-emerald-800 text-emerald-100 px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-400/40 flex items-center gap-1 shadow-sm">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse"></span>
-            <span>Cloud Database (Firestore) ออนไลน์</span>
-          </span>
-        </div>
-        
-        {/* User Info & Admin Actions in Banner */}
-        <div className="flex items-center gap-3 text-emerald-100">
-          {currentUser && (
-            <div className="flex items-center gap-2 bg-emerald-950/60 px-2.5 py-0.5 rounded-full text-[11px] border border-emerald-500/30">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span className="font-semibold text-white">{currentUser.fullName}</span>
-              <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
-                currentUser.role === 'Admin' ? 'bg-purple-900 text-purple-200' : 'bg-emerald-800 text-emerald-100'
-              }`}>
-                {currentUser.role}
-              </span>
-            </div>
-          )}
+      <div className="bg-emerald-700 text-emerald-50 px-4 sm:px-6 lg:px-8 xl:px-12 py-1.5 text-xs font-medium border-b border-emerald-600/30">
+        <div className="max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="bg-emerald-900/60 text-emerald-200 px-2 py-0.5 rounded text-[11px] font-semibold tracking-wide uppercase">
+              ระบาดวิทยา โรงพยาบาลโพนนาแก้ว
+            </span>
+            <span className="hidden sm:inline">ระบบสารสนเทศคัดกรอง รักษา ติดตาม และควบคุมโรควัณโรคระดับพื้นที่</span>
+            <span className="bg-emerald-800 text-emerald-100 px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-400/40 flex items-center gap-1 shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse"></span>
+              <span>Cloud Database (Firestore) ออนไลน์</span>
+            </span>
+          </div>
+          
+          {/* User Info & Admin Actions in Banner */}
+          <div className="flex items-center gap-3 text-emerald-100">
+            {currentUser && (
+              <div className="flex items-center gap-2 bg-emerald-950/60 px-2.5 py-0.5 rounded-full text-[11px] border border-emerald-500/30">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="font-semibold text-white">{currentUser.fullName}</span>
+                <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                  currentUser.role === 'Admin' ? 'bg-purple-900 text-purple-200' : 'bg-emerald-800 text-emerald-100'
+                }`}>
+                  {currentUser.role}
+                </span>
+              </div>
+            )}
 
-          {currentUser?.role === 'Admin' && (
-            <>
-              <button
-                onClick={onOpenUserMgmt}
-                className="bg-purple-600 hover:bg-purple-700 text-white px-2.5 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow transition"
-                title="จัดการผู้ใช้และเพิ่มรหัสผ่าน"
-              >
-                <UserCog className="w-3.5 h-3.5" />
-                <span>+ เพิ่มรหัส/จัดการผู้ใช้</span>
-              </button>
-
-              {onWipeAllData && (
+            {currentUser?.role === 'Admin' && (
+              <>
                 <button
-                  onClick={onWipeAllData}
-                  className="bg-red-700/80 hover:bg-red-600 text-white px-2 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow transition"
-                  title="ลบข้อมูลผู้ป่วยและผู้สัมผัสทั้งหมดในระบบ"
+                  onClick={onOpenUserMgmt}
+                  className="bg-purple-600 hover:bg-purple-700 text-white px-2.5 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow transition"
+                  title="จัดการผู้ใช้และเพิ่มรหัสผ่าน"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span>ล้างข้อมูลทั้งหมด</span>
+                  <UserCog className="w-3.5 h-3.5" />
+                  <span>+ เพิ่มรหัส/จัดการผู้ใช้</span>
                 </button>
-              )}
-            </>
-          )}
 
-          {currentUser && (
-            <button
-              onClick={onLogout}
-              className="bg-emerald-800/80 hover:bg-red-600 text-white px-2 py-0.5 rounded text-[11px] font-medium flex items-center gap-1 transition"
-              title="ออกจากระบบ"
-            >
-              <LogOut className="w-3 h-3" />
-              <span>ออกจากระบบ</span>
-            </button>
-          )}
+                {onWipeAllData && (
+                  <button
+                    onClick={onWipeAllData}
+                    className="bg-red-700/80 hover:bg-red-600 text-white px-2 py-0.5 rounded-lg text-[11px] font-bold flex items-center gap-1 shadow transition"
+                    title="ลบข้อมูลผู้ป่วยและผู้สัมผัสทั้งหมดในระบบ"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ล้างข้อมูลทั้งหมด</span>
+                  </button>
+                )}
+              </>
+            )}
+
+            {currentUser && (
+              <button
+                onClick={onLogout}
+                className="bg-emerald-800/80 hover:bg-red-600 text-white px-2 py-0.5 rounded text-[11px] font-medium flex items-center gap-1 transition"
+                title="ออกจากระบบ"
+              >
+                <LogOut className="w-3 h-3" />
+                <span>ออกจากระบบ</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Main Nav Header */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 xl:px-12">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between py-3 gap-3">
           
           {/* Logo & Title */}
@@ -180,6 +184,21 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <MapPin className="w-4 h-4" />
             <span>SpotMap แผนที่รายหมู่บ้าน</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('tbcxr-screenings')}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-medium whitespace-nowrap transition relative ${
+              activeTab === 'tbcxr-screenings'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-semibold shadow ring-1 ring-emerald-400'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+            }`}
+          >
+            <ShieldAlert className="w-4 h-4 text-rose-400" />
+            <span>คัดกรอง TBCXR Abnormal MTB</span>
+            <span className="ml-1 bg-slate-800 text-slate-200 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
+              {tbcxrScreeningsCount}
+            </span>
           </button>
 
           <button

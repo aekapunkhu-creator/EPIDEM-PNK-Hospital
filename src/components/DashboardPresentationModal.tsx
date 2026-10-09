@@ -256,7 +256,7 @@ export const DashboardPresentationModal: React.FC<DashboardPresentationModalProp
       <div className="flex-1 overflow-auto flex items-center justify-center p-3 sm:p-6 bg-radial from-slate-900 to-slate-950">
         <div className={`w-full transition-all duration-300 ${
           fitMode === 'widescreen169' 
-            ? 'max-w-[1720px] aspect-[16/9] max-h-[85vh] bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 flex flex-col justify-between overflow-y-auto' 
+            ? 'max-w-[1880px] 2xl:max-w-[1920px] aspect-[16/9] max-h-[88vh] bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 flex flex-col justify-between overflow-y-auto' 
             : 'h-full bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-6 sm:p-8 flex flex-col justify-between overflow-y-auto'
         }`}>
           

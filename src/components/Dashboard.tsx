@@ -17,7 +17,7 @@ interface DashboardProps {
   contacts: HouseholdContact[];
   investigations: InvestigationRecord[];
   subdistricts: SubdistrictInfo[];
-  onNavigate: (tab: 'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'line-gas') => void;
+  onNavigate: (tab: 'dashboard' | 'spotmap' | 'tbcxr-screenings' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas') => void;
   onOpenNewPatient: () => void;
   onOpenNewContact: () => void;
   onTriggerQuickNotify: (message: string) => void;
@@ -73,7 +73,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const upcomingAppointments = activePatients.filter(p => p.nextAppointmentDate);
 
   return (
-    <div className="space-[#f8fafc] p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1920px] w-full mx-auto space-y-6">
       
       {/* Banner Notice */}
       <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-slate-900 text-white rounded-2xl p-5 shadow-sm border border-emerald-700/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -183,6 +183,35 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {/* Sub-view: 1. Overview */}
       {dashboardMode === 'overview' && (
         <div className="space-y-6">
+          {/* Active Case Finding Banner: 7 High-Risk Groups TBCXR & MTB */}
+          <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 rounded-3xl p-5 text-white shadow-md border border-emerald-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3.5">
+              <div className="p-3 bg-emerald-500/20 rounded-2xl border border-emerald-400/30 text-emerald-300">
+                <ShieldAlert className="w-6 h-6 text-rose-400" />
+              </div>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-bold text-sm text-white">ระบบคัดกรอง TBCXR Abnormal MTB ใน 7 กลุ่มเสี่ยงสูงแห่งชาติ</h3>
+                  <span className="bg-rose-500/30 text-rose-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-rose-400/30">
+                    Active Case Finding
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
+                  ค้นหาผู้ป่วยวัณโรคเชิงรุกด้วยภาพรังสีทรวงอก (CXR) และตรวจโมเลกุล GeneXpert ใน 7 กลุ่มเป้าหมาย: 
+                  ผู้สัมผัส, ผู้ต้องขัง/สถานคุ้มครอง, ผู้ติดเชื้อ HIV, ผู้มีภูมิคุ้มกันต่ำ/เบาหวาน HbA1C≥7%/ไต, 
+                  ผู้สูงอายุ 65+ มีโรคร่วม, ผู้ใช้สารเสพติด/สุรา และบุคลากรสาธารณสุข
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => onNavigate('tbcxr-screenings')}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-bold text-xs flex items-center gap-1.5 whitespace-nowrap shadow-md transition self-start sm:self-auto active:scale-95"
+            >
+              <span>เปิดระบบคัดกรอง TBCXR</span>
+              <ArrowUpRight className="w-4 h-4 text-slate-950 font-bold" />
+            </button>
+          </div>
+
           {/* KPI Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             

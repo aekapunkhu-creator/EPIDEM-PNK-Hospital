@@ -6,6 +6,7 @@ import {
   useMap 
 } from '@vis.gl/react-google-maps';
 import { LeafletLocationPicker } from './LeafletLocationPicker';
+import { useGoogleMapsKey } from '../utils/googleMaps';
 import { 
   MapPin, X, Check, Navigation, Compass, Crosshair, HelpCircle, ExternalLink, CheckCircle2, Sparkles 
 } from 'lucide-react';
@@ -46,7 +47,7 @@ export const LocationPickerModal: React.FC<LocationPickerModalProps> = ({
   onSelectLocation,
   onShowToast,
 }) => {
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+  const { apiKey, isValid: hasValidGmpKey } = useGoogleMapsKey();
 
   // Default fallback: Phon Na Kaeo Center
   const defaultLat = initialLat && !isNaN(initialLat) && initialLat !== 0 ? initialLat : 17.2225884;
@@ -213,7 +214,7 @@ export const LocationPickerModal: React.FC<LocationPickerModalProps> = ({
 
         {/* Map Container */}
         <div className="relative flex-1 min-h-[320px] sm:min-h-[400px] bg-slate-100">
-          {apiKey && apiKey.trim() !== '' ? (
+          {hasValidGmpKey ? (
             <APIProvider apiKey={apiKey} language="th" region="TH">
               <Map
                 id="modal-location-picker-map"

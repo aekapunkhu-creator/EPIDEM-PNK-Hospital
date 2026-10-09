@@ -30,7 +30,7 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord, VideoCallSession, CallChatMessage, CallStatus, CallParticipant, MultiPeerSignal } from '../types';
+import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord, VideoCallSession, CallChatMessage, CallStatus, CallParticipant, MultiPeerSignal, TbCxrScreeningRecord } from '../types';
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
@@ -161,6 +161,65 @@ export function subscribeHomeVisits(onData: (data: HomeVisitRecord[]) => void, o
     console.error('HomeVisits snapshot error:', err);
     if (onError) onError(err);
   });
+}
+
+export function subscribeTbcxrScreenings(onData: (data: TbCxrScreeningRecord[]) => void, onError?: (err: any) => void) {
+  const colRef = collection(db, 'tbcxr_screenings');
+  return onSnapshot(colRef, (snapshot) => {
+    const items: TbCxrScreeningRecord[] = [];
+    snapshot.forEach(d => {
+      items.push(d.data() as TbCxrScreeningRecord);
+    });
+    onData(items);
+  }, (err) => {
+    console.error('TbcxrScreenings snapshot error:', err);
+    if (onError) onError(err);
+  });
+}
+
+export async function saveAllTbcxrScreeningsToFirestore(screenings: TbCxrScreeningRecord[]) {
+  try {
+    const batch = writeBatch(db);
+    screenings.forEach(s => {
+      const docRef = doc(db, 'tbcxr_screenings', s.id);
+      batch.set(docRef, s);
+    });
+    await batch.commit();
+
+    try {
+      const map: Record<string, TbCxrScreeningRecord> = {};
+      screenings.forEach(s => { map[s.id] = s; });
+      await rtdbSet(rtdbRef(rtdb, 'tbcxr_screenings'), map);
+    } catch (e) {}
+  } catch (e) {
+    console.error('Error saving tbcxr screenings to firestore', e);
+  }
+}
+
+export async function saveTbcxrScreeningToFirestore(screening: TbCxrScreeningRecord) {
+  try {
+    const docRef = doc(db, 'tbcxr_screenings', screening.id);
+    await setDoc(docRef, screening);
+
+    try {
+      await rtdbSet(rtdbRef(rtdb, `tbcxr_screenings/${screening.id}`), screening);
+    } catch (e) {}
+  } catch (e) {
+    console.error('Error saving tbcxr screening to firestore', e);
+  }
+}
+
+export async function deleteTbcxrScreeningFromFirestore(screeningId: string) {
+  try {
+    const docRef = doc(db, 'tbcxr_screenings', screeningId);
+    await deleteDoc(docRef);
+
+    try {
+      await rtdbRemove(rtdbRef(rtdb, `tbcxr_screenings/${screeningId}`));
+    } catch (e) {}
+  } catch (e) {
+    console.error('Error deleting tbcxr screening from firestore', e);
+  }
 }
 
 // Bulk Save / Seed Functions

@@ -6,6 +6,7 @@ import {
   useMap 
 } from '@vis.gl/react-google-maps';
 import { LeafletLocationPicker } from './LeafletLocationPicker';
+import { useGoogleMapsKey } from '../utils/googleMaps';
 import { Patient } from '../types';
 import { 
   MapPin, CheckCircle2, Crosshair, Navigation, HelpCircle, 
@@ -46,7 +47,7 @@ export const PublicLocationSubmitView: React.FC<PublicLocationSubmitViewProps> =
   onClosePublicView,
   onLogoutReporter
 }) => {
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+  const { apiKey, isValid: hasValidGmpKey } = useGoogleMapsKey();
 
   const initialLat = patient.lat && patient.lat !== 0 ? patient.lat : 17.2225884;
   const initialLng = patient.lng && patient.lng !== 0 ? patient.lng : 104.3093759;
@@ -324,7 +325,7 @@ export const PublicLocationSubmitView: React.FC<PublicLocationSubmitViewProps> =
               </div>
 
               <div className="relative rounded-2xl overflow-hidden border-2 border-emerald-500 shadow-inner h-64 bg-slate-100">
-                {apiKey && apiKey.trim() !== '' ? (
+                {hasValidGmpKey ? (
                   <APIProvider apiKey={apiKey} language="th" region="TH">
                     <Map
                       id="public-location-submit-map"

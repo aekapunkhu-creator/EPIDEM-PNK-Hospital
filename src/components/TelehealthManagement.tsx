@@ -77,7 +77,7 @@ export const TelehealthManagement: React.FC<TelehealthManagementProps> = ({
   const waitingCalls = callSessions.filter(c => c.status === 'waiting' || c.status === 'ringing').length;
 
   return (
-    <div className="space-y-6 animate-fade-in font-['Prompt',sans-serif]">
+    <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1920px] w-full mx-auto space-y-6 animate-fade-in font-['Prompt',sans-serif]">
       
       {/* Header Banner */}
       <div className="bg-gradient-to-r from-teal-800 via-emerald-800 to-slate-900 rounded-3xl p-6 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border border-emerald-700/40">

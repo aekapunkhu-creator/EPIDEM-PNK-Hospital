@@ -156,7 +156,7 @@ export const LineAppsScript: React.FC<LineAppsScriptProps> = ({
   };
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1920px] w-full mx-auto space-y-6">
       
       {/* Top Banner */}
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white rounded-2xl p-5 shadow-sm border border-slate-700/80 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

@@ -214,7 +214,7 @@ export const PatientManagement: React.FC<PatientManagementProps> = ({
   };
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1920px] w-full mx-auto space-y-6">
       
       {/* Top Header & Search Bar */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-sm space-y-4">

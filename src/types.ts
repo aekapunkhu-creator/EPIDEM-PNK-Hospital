@@ -630,3 +630,215 @@ export interface VideoCallSession {
   }>;
 }
 
+// 7 กลุ่มเสี่ยงคัดกรองวัณโรคแห่งชาติ (National TB Screening 7 High-Risk Target Groups)
+export type TBRiskGroupKey =
+  | 'contact'              // 1. ผู้สัมผัสผู้ป่วยวัณโรคปอด (ใกล้ชิดหรืออาศัยอยู่ร่วมกับผู้ป่วย)
+  | 'inmate_welfare'      // 2. ผู้ต้องขัง ผู้อาศัยในสถานคุ้มครองและพัฒนาคนพิการ
+  | 'hiv'                 // 3. ผู้ติดเชื้อเอชไอวี (HIV)
+  | 'immunocompromised'   // 4. ผู้ป่วยโรคที่ทำให้ภูมิคุ้มกันลดลง เช่น ผู้ป่วยเบาหวาน (HbA1C ≥ 7%), ผู้ป่วยโรคไตเรื้อรัง หรือผู้ที่ได้รับยากดภูมิคุ้มกัน
+  | 'elderly_comorbid'    // 5. ผู้สูงอายุตั้งแต่ 65 ปีขึ้นไปที่มีโรคร่วม
+  | 'substance_alcohol'   // 6. ผู้ใช้สารเสพติด และผู้ที่ติดสุราเรื้อรัง
+  | 'healthcare_worker';  // 7. บุคลากรสาธารณสุข ที่มีโอกาสดูแลหรือสัมผัสผู้ป่วยวัณโรค
+
+export interface TBRiskGroupMeta {
+  key: TBRiskGroupKey;
+  code: string;
+  name: string;
+  shortName: string;
+  description: string;
+  iconName: string;
+  colorClass: string;
+  badgeBg: string;
+  badgeText: string;
+  annualTargetPercent: number;
+}
+
+export const TB_RISK_GROUPS_CONFIG: Record<TBRiskGroupKey, TBRiskGroupMeta> = {
+  contact: {
+    key: 'contact',
+    code: 'G1',
+    name: 'ผู้สัมผัสผู้ป่วยวัณโรคปอด (ใกล้ชิดหรืออาศัยอยู่ร่วมกับผู้ป่วย)',
+    shortName: 'ผู้สัมผัสผู้ป่วยวัณโรค',
+    description: 'อาศัยบ้านเดียวกัน หรือสัมผัสใกล้ชิดผู้ป่วยวัณโรคปอดที่มีผลเสมหะบวกหรือมีโพรงแผล',
+    iconName: 'Users',
+    colorClass: 'emerald',
+    badgeBg: 'bg-emerald-100',
+    badgeText: 'text-emerald-800',
+    annualTargetPercent: 95
+  },
+  inmate_welfare: {
+    key: 'inmate_welfare',
+    code: 'G2',
+    name: 'ผู้ต้องขัง ผู้อาศัยในสถานคุ้มครองและพัฒนาคนพิการ',
+    shortName: 'ผู้ต้องขัง/สถานคุ้มครอง',
+    description: 'ผู้ถูกคุมขังในเรือนจำ ผู้พักอาศัยในสถานสงเคราะห์และพัฒนาคนพิการ พื้นที่แออัด',
+    iconName: 'Shield',
+    colorClass: 'violet',
+    badgeBg: 'bg-purple-100',
+    badgeText: 'text-purple-800',
+    annualTargetPercent: 90
+  },
+  hiv: {
+    key: 'hiv',
+    code: 'G3',
+    name: 'ผู้ติดเชื้อเอชไอวี (HIV)',
+    shortName: 'ผู้ติดเชื้อ HIV',
+    description: 'ผู้ติดเชื้อเอชไอวีทุกรายทั้งที่ได้รับและยังไม่ได้รับยาต้านไวรัส (ART)',
+    iconName: 'HeartPulse',
+    colorClass: 'rose',
+    badgeBg: 'bg-rose-100',
+    badgeText: 'text-rose-800',
+    annualTargetPercent: 95
+  },
+  immunocompromised: {
+    key: 'immunocompromised',
+    code: 'G4',
+    name: 'ผู้ป่วยโรคที่ทำให้ภูมิคุ้มกันลดลง เช่น ผู้ป่วยเบาหวาน (HbA1C ≥ 7%), ผู้ป่วยโรคไตเรื้อรัง หรือผู้ที่ได้รับยากดภูมิคุ้มกัน',
+    shortName: 'ภูมิคุ้มกันต่ำ/เบาหวาน/ไต',
+    description: 'เบาหวานควบคุมไม่ได้ (HbA1c ≥ 7%), โรคไตเรื้อรัง (CKD Stage 3-5), ได้รับสเตียรอยด์หรือยากดภูมิคุ้มกัน',
+    iconName: 'AlertTriangle',
+    colorClass: 'amber',
+    badgeBg: 'bg-amber-100',
+    badgeText: 'text-amber-800',
+    annualTargetPercent: 85
+  },
+  elderly_comorbid: {
+    key: 'elderly_comorbid',
+    code: 'G5',
+    name: 'ผู้สูงอายุตั้งแต่ 65 ปีขึ้นไปที่มีโรคร่วม',
+    shortName: 'ผู้สูงอายุ 65+ มีโรคร่วม',
+    description: 'ผู้มีอายุ 65 ปีขึ้นไปที่มีโรคร่วมเรื้อรัง เช่น ความดัน, เบาหวาน, ถุงลมโป่งพอง, โรคหัวใจ',
+    iconName: 'UserCheck',
+    colorClass: 'blue',
+    badgeBg: 'bg-blue-100',
+    badgeText: 'text-blue-800',
+    annualTargetPercent: 80
+  },
+  substance_alcohol: {
+    key: 'substance_alcohol',
+    code: 'G6',
+    name: 'ผู้ใช้สารเสพติด และผู้ที่ติดสุราเรื้อรัง',
+    shortName: 'ใช้สารเสพติด/ติดสุรา',
+    description: 'ผู้มีประวัติใช้สารเสพติดทุกชนิด หรือดื่มสุราเป็นประจำ/ติดสุราเรื้อรัง',
+    iconName: 'Activity',
+    colorClass: 'orange',
+    badgeBg: 'bg-orange-100',
+    badgeText: 'text-orange-800',
+    annualTargetPercent: 75
+  },
+  healthcare_worker: {
+    key: 'healthcare_worker',
+    code: 'G7',
+    name: 'บุคลากรสาธารณสุข ที่มีโอกาสดูแลหรือสัมผัสผู้ป่วยวัณโรค',
+    shortName: 'บุคลากรสาธารณสุข',
+    description: 'แพทย์ พยาบาล นักเทคนิคการแพทย์ จพ.สาธารณสุข อสม. และเจ้าหน้าที่ห้องชันสูตร/คลินิกวัณโรค/แผนกผู้ป่วยนอก',
+    iconName: 'Stethoscope',
+    colorClass: 'teal',
+    badgeBg: 'bg-teal-100',
+    badgeText: 'text-teal-800',
+    annualTargetPercent: 95
+  }
+};
+
+export type CxrFindingStatus = 'Normal' | 'Abnormal TB Suspect' | 'Abnormal Non-TB' | 'Pending' | 'Not Done';
+
+export type MtbTestType = 'GeneXpert MTB/RIF' | 'GeneXpert Ultra' | 'TB-LAMP' | 'AFB Smear' | 'TB Culture' | 'ยังไม่ได้ตรวจ';
+
+export type MtbResultStatus = 
+  | 'MTB not detected'
+  | 'MTB detected, Rif Resistance not detected'
+  | 'MTB detected, Rif Resistance detected'
+  | 'MTB detected, Rif Resistance indeterminate'
+  | 'AFB Positive (1+ - 3+)'
+  | 'AFB Negative'
+  | 'Pending'
+  | 'Not Done';
+
+export type ScreeningDiagnosisStatus = 
+  | 'รอผลตรวจยืนยัน'
+  | 'วัณโรคปอด (Active TB - เข้าเกณฑ์รักษา)'
+  | 'วัณโรคระยะแฝง (LTBI - พิจารณา TPT)'
+  | 'ไม่พบวัณโรค (Normal / Non-TB)'
+  | 'ส่งต่อตรวจวินิจฉัยเพิ่มเติม รพ.สกลนคร';
+
+export type ScreeningActionPlan =
+  | 'เริ่มยารักษาวัณโรค (Active TB Treatment)'
+  | 'เริ่มยาป้องกันวัณโรค (TPT: 3HP/1HP/6H)'
+  | 'นัดทำ CXR ซ้ำใน 3-6 เดือน'
+  | 'ส่งต่ออายุรแพทย์/แพทย์เฉพาะทาง'
+  | 'สุขศึกษาและติดตามอาการ'
+  | 'รอผลชันสูตร/เพาะเชื้อ';
+
+export interface TbCxrScreeningRecord {
+  id: string; // เช่น CXR-67-001
+  screeningDate: string; // YYYY-MM-DD
+  screeningCampaign: string; // e.g. 'รถเอกซเรย์ระบบดิจิทัลพระราชทาน', 'ตรวจคัดกรองเชิงรุกประจำปี', 'คัดกรองกลุ่มเสี่ยง รพ.สต.'
+  screeningFacility: string; // เช่น รพ.โพนนาแก้ว, รพ.สต.บ้านใหม่ไชยา
+  
+  // กลุ่มเสี่ยง 7 กลุ่ม
+  riskGroup: TBRiskGroupKey;
+  riskGroupSpecificDetail?: string; // เช่น 'DM HbA1c 8.5%', 'ผู้สัมผัสร่วมบ้านผู้ป่วย TB-6701', 'บุคลากรคลินิก ARI/TB'
+  indexPatientHN?: string; // ถ้าเป็นผู้สัมผัส
+  indexPatientName?: string;
+
+  // ข้อมูลบุคคล
+  hn: string;
+  idCard: string;
+  prefix: string;
+  firstName: string;
+  lastName: string;
+  age: number;
+  gender: 'ชาย' | 'หญิง';
+  phone: string;
+  subdistrict: string; // ตำบลบ้านโพน, ตำบลบ้านแป้น, ฯลฯ
+  village: string;     // หมู่บ้าน
+  houseNo: string;
+  lat?: number;
+  lng?: number;
+
+  // การประเมินอาการ 4 อาการ (Symptom Screen)
+  symptoms: {
+    coughOver2Weeks: boolean;
+    fever: boolean;
+    nightSweats: boolean;
+    weightLoss: boolean;
+    hemoptysis: boolean; // ไอเป็นเลือด
+  };
+  hasAnySymptom: boolean;
+
+  // ผล Chest X-ray (TBCXR)
+  cxrDate: string;
+  cxrResult: CxrFindingStatus;
+  cxrAbnormalPattern?: 'Infiltration / Patchy' | 'Cavity' | 'Nodule / Mass' | 'Pleural Effusion' | 'Fibrocalcific (Old TB)' | 'Miliary' | 'Cardiomegaly / Other' | 'None';
+  cxrDetails?: string; // บันทึกรายละเอียดภาพรังสี
+  cxrAiScore?: number; // คะแนน AI / CAD4TB Score (0 - 100)
+  radiologistName?: string; // แพทย์หรือผู้แปลผล
+
+  // ผลตรวจทางโมเลกุลและเสมหะ (MTB / GeneXpert / AFB)
+  mtbTestDone: boolean;
+  mtbTestType: MtbTestType;
+  mtbTestDate?: string;
+  mtbResult: MtbResultStatus;
+  mtbLabNumber?: string;
+  specimenType?: 'Sputum (เสมหะ)' | 'Gastric Lavage' | 'Pleural Fluid' | 'Other';
+
+  // การวินิจฉัยและแผนการรักษา
+  diagnosisStatus: ScreeningDiagnosisStatus;
+  actionPlan: ScreeningActionPlan;
+  tptRegimen?: '3HP' | '1HP' | '6H'; // กรณีได้ยาป้องกัน
+  activeTbRegimen?: string; // เช่น 2HRZE/4HR
+  treatmentStartDate?: string;
+
+  // การเชื่อมโยงทะเบียนผู้ป่วย
+  transferredToPatientRegistry: boolean;
+  transferredPatientId?: string; // Link to Patient id
+  transferredAt?: string;
+
+  notes?: string;
+  screenerName: string; // ผู้บันทึก/ผู้คัดกรอง
+  screenerRole?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+

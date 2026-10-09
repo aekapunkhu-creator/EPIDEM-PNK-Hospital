@@ -351,7 +351,7 @@ export const HomeVisitManagement: React.FC<HomeVisitManagementProps> = ({
   };
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1920px] w-full mx-auto space-y-6">
       
       {/* Top Banner & Title */}
       <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-slate-900 text-white rounded-2xl p-5 shadow-sm border border-emerald-700/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

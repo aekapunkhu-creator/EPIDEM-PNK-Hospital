@@ -700,7 +700,7 @@ export const HomeVisitRoutePlanner: React.FC<HomeVisitRoutePlannerProps> = ({
               </div>
             </div>
 
-            <div className="h-[420px] w-full relative">
+            <div className="h-[460px] 2xl:h-[580px] w-full relative">
               <div ref={routeMapRef} className="w-full h-full z-0" />
             </div>
           </div>

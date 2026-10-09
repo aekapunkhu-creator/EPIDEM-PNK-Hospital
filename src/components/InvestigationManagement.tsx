@@ -120,7 +120,7 @@ export const InvestigationManagement: React.FC<InvestigationManagementProps> = (
   };
 
   return (
-    <div className="space-y-6 animate-fadeIn pb-12">
+    <div className="p-4 sm:p-6 lg:p-8 xl:p-10 max-w-[1920px] w-full mx-auto space-y-6 animate-fadeIn pb-12">
       {/* Top Banner & Header */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex items-start gap-3.5">

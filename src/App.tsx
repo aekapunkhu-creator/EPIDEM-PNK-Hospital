@@ -23,8 +23,9 @@ import {
   INITIAL_USERS
 } from './data/mockData';
 
-import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord, VideoCallSession } from './types';
+import { Patient, HouseholdContact, LineNotificationConfig, NotificationLog, UserAccount, InvestigationRecord, HomeVisitRecord, VideoCallSession, TbCxrScreeningRecord } from './types';
 import { CheckCircle2, AlertCircle, Database } from 'lucide-react';
+import { TbCxrScreeningManagement } from './components/TbCxrScreeningManagement';
 import { InvestigationManagement } from './components/InvestigationManagement';
 import { HomeVisitManagement } from './components/HomeVisitManagement';
 import { TelehealthManagement } from './components/TelehealthManagement';
@@ -41,6 +42,7 @@ import {
   subscribeUsers,
   subscribeLineConfig,
   subscribeLogs,
+  subscribeTbcxrScreenings,
   saveAllPatientsToFirestore,
   saveAllContactsToFirestore,
   saveAllInvestigationsToFirestore,
@@ -48,6 +50,7 @@ import {
   saveAllUsersToFirestore,
   saveLineConfigToFirestore,
   saveAllLogsToFirestore,
+  saveAllTbcxrScreeningsToFirestore,
   savePatientToFirestore,
   deletePatientFromFirestore,
   saveContactToFirestore,
@@ -56,19 +59,22 @@ import {
   deleteInvestigationFromFirestore,
   saveHomeVisitToFirestore,
   deleteHomeVisitFromFirestore,
+  saveTbcxrScreeningToFirestore,
+  deleteTbcxrScreeningFromFirestore,
   saveUserToFirestore,
   deleteUserFromFirestore,
   clearCollectionInFirestore,
   fetchPatientByIdFromFirestore
 } from './services/firebaseStore';
 import { safeStorage } from './utils/safeStorage';
+import { INITIAL_TBCXR_SCREENINGS } from './data/mockData';
 
 const MOCK_PATIENT_IDS = ['TB-6701', 'TB-6702', 'TB-6703', 'TB-6704', 'TB-6705'];
 const MOCK_CONTACT_IDS = ['CT-101', 'CT-102', 'CT-103', 'CT-104'];
 const MOCK_LOG_IDS = ['LOG-001', 'LOG-002', 'LOG-003'];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'spotmap' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'spotmap' | 'tbcxr-screenings' | 'patients' | 'contacts' | 'investigations' | 'home-visits' | 'telehealth' | 'line-gas'>('dashboard');
 
   // Application Persistent State
   const [patients, setPatients] = useState<Patient[]>(() => {
@@ -113,6 +119,14 @@ export default function App() {
     return [];
   });
 
+  const [tbcxrScreenings, setTbcxrScreenings] = useState<TbCxrScreeningRecord[]>(() => {
+    const saved = safeStorage.getItem('tb_phon_tbcxr_screenings_v1');
+    if (saved) {
+      try { return JSON.parse(saved); } catch (e) { console.error('Error loading tbcxr screenings from storage', e); }
+    }
+    return INITIAL_TBCXR_SCREENINGS;
+  });
+
   const [callSessions, setCallSessions] = useState<VideoCallSession[]>([]);
 
   const [lineConfig, setLineConfig] = useState<LineNotificationConfig>(() => {
@@ -147,6 +161,17 @@ export default function App() {
 
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
   const [isFirestoreReady, setIsFirestoreReady] = useState(false);
+  const [hasGmpQuotaNotice, setHasGmpQuotaNotice] = useState(false);
+
+  useEffect(() => {
+    const handleQuotaExceeded = () => {
+      setHasGmpQuotaNotice(true);
+    };
+    window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    return () => {
+      window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    };
+  }, []);
 
   // Doctor Video Call State
   const [isDoctorCallModalOpen, setIsDoctorCallModalOpen] = useState(false);
@@ -240,6 +265,17 @@ export default function App() {
       setCallSessions(calls || []);
     });
 
+    // 9. Subscribe TBCXR Screenings (7 Risk Groups)
+    const unsubScreenings = subscribeTbcxrScreenings((data) => {
+      if (data && data.length > 0) {
+        setTbcxrScreenings(data);
+      } else if (data && data.length === 0) {
+        // Seed initial data to firestore if empty
+        saveAllTbcxrScreeningsToFirestore(INITIAL_TBCXR_SCREENINGS);
+        setTbcxrScreenings(INITIAL_TBCXR_SCREENINGS);
+      }
+    });
+
     return () => {
       unsubPatients();
       unsubContacts();
@@ -249,6 +285,7 @@ export default function App() {
       unsubLine();
       unsubLogs();
       unsubCalls();
+      unsubScreenings();
     };
   }, []);
 
@@ -280,6 +317,13 @@ export default function App() {
       saveAllHomeVisitsToFirestore(homeVisits);
     }
   }, [homeVisits]);
+
+  useEffect(() => {
+    safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(tbcxrScreenings));
+    if (tbcxrScreenings.length > 0) {
+      saveAllTbcxrScreeningsToFirestore(tbcxrScreenings);
+    }
+  }, [tbcxrScreenings]);
 
   useEffect(() => {
     safeStorage.setItem('tb_phon_line_config_v2', JSON.stringify(lineConfig));
@@ -684,6 +728,67 @@ export default function App() {
     showToast(`ลบบันทึกการเยี่ยมบ้าน ${target ? target.patientName : ''} เรียบร้อยแล้ว`);
   };
 
+  // TBCXR Screening Handlers (7 Risk Groups)
+  const handleAddTbcxrScreening = (newRec: TbCxrScreeningRecord) => {
+    setTbcxrScreenings(prev => [newRec, ...prev]);
+    saveTbcxrScreeningToFirestore(newRec);
+    showToast(`บันทึกการคัดกรอง TBCXR สำเร็จ: ${newRec.prefix}${newRec.firstName} ${newRec.lastName}`);
+  };
+
+  const handleUpdateTbcxrScreening = (updatedRec: TbCxrScreeningRecord) => {
+    setTbcxrScreenings(prev => prev.map(s => s.id === updatedRec.id ? updatedRec : s));
+    saveTbcxrScreeningToFirestore(updatedRec);
+  };
+
+  const handleDeleteTbcxrScreening = (screeningId: string) => {
+    setTbcxrScreenings(prev => prev.filter(s => s.id !== screeningId));
+    deleteTbcxrScreeningFromFirestore(screeningId);
+  };
+
+  const handlePromoteTbcxrToPatient = (screening: TbCxrScreeningRecord) => {
+    const newPatientId = `TB-67${String(patients.length + 1).padStart(2, '0')}`;
+    const newPatient: Patient = {
+      id: newPatientId,
+      hn: screening.hn,
+      idCard: screening.idCard || '',
+      prefix: screening.prefix,
+      firstName: screening.firstName,
+      lastName: screening.lastName,
+      gender: screening.gender,
+      age: screening.age,
+      phone: screening.phone || '',
+      subdistrict: screening.subdistrict,
+      village: screening.village,
+      houseNo: screening.houseNo || '',
+      tbType: screening.mtbResult.includes('MTB detected') ? 'Pulmonary Smear+' : 'Pulmonary Smear-',
+      regimen: screening.activeTbRegimen || '2HRZE/4HR',
+      registrationDate: new Date().toISOString().split('T')[0],
+      treatmentStartDate: screening.treatmentStartDate || new Date().toISOString().split('T')[0],
+      expectedEndDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      dotsSupervisorName: 'อสม. ประจำหมู่บ้าน',
+      dotsSupervisorRole: 'อสม. พี่เลี้ยง',
+      dotsSupervisorPhone: '',
+      status: 'Active',
+      lat: screening.lat || 17.2225884,
+      lng: screening.lng || 104.3821033,
+      sputumRecords: [
+        {
+          monthLabel: ' Baseline (เดือน 0)',
+          monthNum: 0,
+          dueDate: new Date().toISOString().split('T')[0],
+          testDate: screening.mtbTestDate || new Date().toISOString().split('T')[0],
+          result: screening.mtbResult.includes('MTB detected') ? '1+' : 'Pending',
+          labNumber: screening.mtbLabNumber || '',
+          notes: `ผลตรวจจากหน้าคัดกรอง TBCXR (${screening.id}) กลุ่มเสี่ยง: ${screening.riskGroup}`
+        }
+      ],
+      dotsLogs: []
+    };
+
+    setPatients(prev => [newPatient, ...prev]);
+    savePatientToFirestore(newPatient);
+  };
+
   const handleWipeAllData = async () => {
     if (!window.confirm('⚠️ คำเตือน: คุณต้องการลบข้อมูลผู้ป่วย, คัดกรองผู้สัมผัส, แบบสอบสวนโรค, การเยี่ยมบ้าน และประวัติการแจ้งเตือนทั้งหมดออกจากระบบและฐานข้อมูล Cloud หรือไม่?\n\n(ข้อมูลจะถูกล้างหมดทั้งในเครื่องและ Cloud ฐานข้อมูลจะว่างเปล่าพร้อมใช้งาน)')) {
       return;
@@ -891,6 +996,30 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-['Prompt',sans-serif]">
+      {/* Google Maps Platform Quota Exceeded In-App Banner */}
+      {hasGmpQuotaNotice && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2.5 text-xs md:text-sm text-center sticky top-0 z-50 shadow-sm flex items-center justify-center gap-2">
+          <span>
+            Google Maps Platform quota reached. If you are the app owner, visit{' '}
+            <a
+              href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline font-semibold text-amber-950 hover:text-amber-800"
+            >
+              maps developer site
+            </a>{' '}
+            for instructions to update your account. (ระบบเปิดใช้งานแผนที่ดาวเทียมสำรองอัตโนมัติ)
+          </span>
+          <button
+            onClick={() => setHasGmpQuotaNotice(false)}
+            className="ml-2 text-amber-700 hover:text-amber-950 font-bold px-1.5 py-0.5 rounded text-xs transition"
+            title="ปิดการแจ้งเตือน"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       
       {/* Navigation Header */}
       <Header
@@ -898,6 +1027,7 @@ export default function App() {
         setActiveTab={setActiveTab}
         patientsCount={patients.length}
         contactsCount={contacts.length}
+        tbcxrScreeningsCount={tbcxrScreenings.length}
         investigationsCount={investigations.length}
         homeVisitsCount={homeVisits.length}
         videoCallsCount={callSessions.length}
@@ -925,7 +1055,7 @@ export default function App() {
       )}
 
       {/* Main Active Tab Content */}
-      <main className="flex-1 pb-12">
+      <main className="flex-1 pb-12 w-full">
         {activeTab === 'dashboard' && (
           <Dashboard
             patients={patients}
@@ -963,6 +1093,19 @@ export default function App() {
               }
               setIsShareLocationOpen(true);
             }}
+          />
+        )}
+
+        {activeTab === 'tbcxr-screenings' && (
+          <TbCxrScreeningManagement
+            screenings={tbcxrScreenings}
+            onAddScreening={handleAddTbcxrScreening}
+            onUpdateScreening={handleUpdateTbcxrScreening}
+            onDeleteScreening={handleDeleteTbcxrScreening}
+            onPromoteToPatient={handlePromoteTbcxrToPatient}
+            currentUser={currentUser}
+            existingPatients={patients}
+            onShowToast={showToast}
           />
         )}
 
