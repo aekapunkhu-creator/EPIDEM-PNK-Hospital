@@ -72,6 +72,7 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
   const [editingRecord, setEditingRecord] = useState<TbCxrScreeningRecord | null>(null);
   const [viewingRecord, setViewingRecord] = useState<TbCxrScreeningRecord | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [highlightedRecordId, setHighlightedRecordId] = useState<string | null>(null);
 
   // Form State
   const initialForm: Partial<TbCxrScreeningRecord> = {
@@ -209,14 +210,27 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
     };
   }, [screenings]);
 
+  // Helper to generate unique screening ID
+  const generateUniqueScreeningId = (list: TbCxrScreeningRecord[]) => {
+    const numbers = list
+      .map(s => {
+        const match = s.id?.match(/CXR-67-(\d+)/i);
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter(n => !isNaN(n) && n > 0);
+    const maxNum = numbers.length > 0 ? Math.max(...numbers) : 0;
+    return `CXR-67-${String(maxNum + 1).padStart(3, '0')}`;
+  };
+
   // Open Form for Adding New Record
   const handleOpenAddForm = (preselectedGroup?: TBRiskGroupKey) => {
-    const newId = `CXR-67-${String(screenings.length + 1).padStart(3, '0')}`;
+    const newId = generateUniqueScreeningId(screenings);
     setFormData({
       ...initialForm,
       id: newId,
       riskGroup: preselectedGroup || (selectedRiskGroup !== 'ALL' ? selectedRiskGroup : 'contact'),
-      screenerName: currentUser ? currentUser.fullName : 'เจ้าหน้าที่ รพ.โพนนาแก้ว'
+      screenerName: currentUser ? currentUser.fullName : 'เจ้าหน้าที่ รพ.โพนนาแก้ว',
+      screenerRole: currentUser ? currentUser.role : 'Staff'
     });
     setEditingRecord(null);
     setIsFormOpen(true);
@@ -246,21 +260,95 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
     };
     const hasAny = Object.values(symptomsObj).some(val => Boolean(val));
 
+    const targetId = editingRecord ? editingRecord.id : (formData.id || generateUniqueScreeningId(screenings));
     const finalRecord: TbCxrScreeningRecord = {
-      ...(formData as TbCxrScreeningRecord),
-      id: editingRecord ? editingRecord.id : (formData.id || `CXR-67-${Date.now()}`),
+      id: targetId,
+      screeningDate: formData.screeningDate || new Date().toISOString().split('T')[0],
+      screeningCampaign: formData.screeningCampaign || 'คัดกรองกลุ่มเสี่ยง 7 กลุ่มประจำปี 2567',
+      screeningFacility: formData.screeningFacility || 'รพ.โพนนาแก้ว',
+      riskGroup: (formData.riskGroup as TBRiskGroupKey) || 'contact',
+      riskGroupSpecificDetail: formData.riskGroupSpecificDetail || '',
+      indexPatientHN: formData.indexPatientHN || '',
+      indexPatientName: formData.indexPatientName || '',
+      hn: (formData.hn || '').trim(),
+      idCard: formData.idCard || '',
+      prefix: formData.prefix || 'นาย',
+      firstName: (formData.firstName || '').trim(),
+      lastName: (formData.lastName || '').trim(),
+      age: Number(formData.age) || 0,
+      gender: formData.gender || 'ชาย',
+      phone: formData.phone || '',
+      subdistrict: formData.subdistrict || 'ตำบลบ้านโพน',
+      village: formData.village || '',
+      houseNo: formData.houseNo || '',
+      lat: formData.lat || 17.2225884,
+      lng: formData.lng || 104.3821033,
+      symptoms: symptomsObj,
       hasAnySymptom: hasAny,
-      createdAt: editingRecord ? editingRecord.createdAt : new Date().toISOString(),
+      cxrDate: formData.cxrDate || new Date().toISOString().split('T')[0],
+      cxrResult: formData.cxrResult || 'Normal',
+      cxrAbnormalPattern: formData.cxrAbnormalPattern || 'None',
+      cxrDetails: formData.cxrDetails || '',
+      cxrAiScore: formData.cxrAiScore !== undefined ? Number(formData.cxrAiScore) : 0,
+      radiologistName: formData.radiologistName || 'พญ.ชญานิศ รังสีแพทย์',
+      mtbTestDone: Boolean(formData.mtbTestDone),
+      mtbTestType: formData.mtbTestType || 'ยังไม่ได้ตรวจ',
+      mtbTestDate: formData.mtbTestDate || '',
+      mtbResult: formData.mtbResult || 'Not Done',
+      mtbLabNumber: formData.mtbLabNumber || '',
+      specimenType: formData.specimenType || 'Sputum (เสมหะ)',
+      diagnosisStatus: formData.diagnosisStatus || 'รอผลตรวจยืนยัน',
+      actionPlan: formData.actionPlan || 'สุขศึกษาและติดตามอาการ',
+      activeTbRegimen: formData.activeTbRegimen || '',
+      tptRegimen: (formData.tptRegimen as any) || '',
+      treatmentStartDate: formData.treatmentStartDate || '',
+      transferredToPatientRegistry: Boolean(formData.transferredToPatientRegistry),
+      transferredPatientId: formData.transferredPatientId || '',
+      transferredAt: formData.transferredAt || '',
+      notes: formData.notes || '',
+      screenerName: formData.screenerName || (currentUser ? currentUser.fullName : 'เจ้าหน้าที่ผู้คัดกรอง'),
+      screenerRole: formData.screenerRole || (currentUser ? currentUser.role : 'Staff'),
+      createdAt: editingRecord?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
 
     if (editingRecord) {
       onUpdateScreening(finalRecord);
-      onShowToast(`อัปเดตข้อมูลคัดกรอง ${finalRecord.prefix}${finalRecord.firstName} สำเร็จ`, 'success');
+      onShowToast(`อัปเดตข้อมูลคัดกรอง ${finalRecord.prefix}${finalRecord.firstName} ${finalRecord.lastName} สำเร็จ`, 'success');
     } else {
       onAddScreening(finalRecord);
-      onShowToast(`บันทึกข้อมูลคัดกรองกลุ่มเสี่ยง ${finalRecord.prefix}${finalRecord.firstName} เรียบร้อย`, 'success');
+      onShowToast(`บันทึกข้อมูลคัดกรองกลุ่มเสี่ยง ${finalRecord.prefix}${finalRecord.firstName} ${finalRecord.lastName} เรียบร้อย`, 'success');
     }
+
+    // Reset filters that would hide this newly saved/updated record
+    if (selectedRiskGroup !== 'ALL' && selectedRiskGroup !== finalRecord.riskGroup) {
+      setSelectedRiskGroup('ALL');
+    }
+    if (cxrFilter !== 'ALL' && cxrFilter !== finalRecord.cxrResult) {
+      setCxrFilter('ALL');
+    }
+    if (mtbFilter !== 'ALL') {
+      setMtbFilter('ALL');
+    }
+    if (onlyAbnormal && finalRecord.cxrResult !== 'Abnormal TB Suspect') {
+      setOnlyAbnormal(false);
+    }
+    if (onlyMtbDetected && !finalRecord.mtbResult.includes('MTB detected')) {
+      setOnlyMtbDetected(false);
+    }
+    if (onlyPending && finalRecord.diagnosisStatus !== 'รอผลตรวจยืนยัน' && finalRecord.mtbResult !== 'Pending') {
+      setOnlyPending(false);
+    }
+    if (subdistrictFilter !== 'ALL' && subdistrictFilter !== finalRecord.subdistrict) {
+      setSubdistrictFilter('ALL');
+    }
+    setSearchQuery('');
+
+    // Highlight row
+    setHighlightedRecordId(finalRecord.id);
+    setTimeout(() => {
+      setHighlightedRecordId(null);
+    }, 4500);
 
     setIsFormOpen(false);
   };
@@ -783,8 +871,31 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
         {filteredScreenings.length === 0 ? (
           <div className="p-12 text-center text-slate-500 space-y-3">
             <AlertCircle className="w-10 h-10 text-slate-400 mx-auto" />
-            <p className="text-sm font-semibold text-slate-700">ไม่พบข้อมูลตามเงื่อนไขที่ค้นหา</p>
-            <p className="text-xs text-slate-400">ลองปรับเปลี่ยนตัวกรอง หรือคลิก "+ บันทึกคัดกรองรายใหม่"</p>
+            <p className="text-sm font-semibold text-slate-700">ไม่พบข้อมูลตามเงื่อนไขตัวกรอง</p>
+            <p className="text-xs text-slate-400">ระบบมีข้อมูลทั้งหมด {screenings.length} รายการ ลองปรับเปลี่ยนตัวกรอง หรือคลิก "+ บันทึกคัดกรองรายใหม่"</p>
+            <div className="pt-2 flex items-center justify-center gap-3">
+              <button
+                onClick={() => {
+                  setSelectedRiskGroup('ALL');
+                  setCxrFilter('ALL');
+                  setMtbFilter('ALL');
+                  setSubdistrictFilter('ALL');
+                  setOnlyAbnormal(false);
+                  setOnlyMtbDetected(false);
+                  setOnlyPending(false);
+                  setSearchQuery('');
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition"
+              >
+                ล้างตัวกรองทั้งหมด (แสดงครบ {screenings.length} รายการ)
+              </button>
+              <button
+                onClick={() => handleOpenAddForm()}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition"
+              >
+                + บันทึกคัดกรองรายใหม่
+              </button>
+            </div>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -807,13 +918,16 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
                   const isAbnormalCxr = record.cxrResult === 'Abnormal TB Suspect';
                   const isMtbDetected = record.mtbResult.includes('MTB detected');
                   const isRifResistant = record.mtbResult.includes('Rif Resistance detected');
+                  const isHighlighted = highlightedRecordId === record.id;
 
                   return (
                     <tr 
                       key={record.id} 
-                      className={`hover:bg-slate-50/80 transition ${
-                        isAbnormalCxr ? 'bg-amber-50/20' : ''
-                      } ${isMtbDetected ? 'bg-rose-50/30' : ''}`}
+                      className={`transition-all duration-300 ${
+                        isHighlighted
+                          ? 'bg-emerald-100/90 ring-2 ring-emerald-500'
+                          : isAbnormalCxr ? 'bg-amber-50/20 hover:bg-amber-50/40' : isMtbDetected ? 'bg-rose-50/30 hover:bg-rose-50/50' : 'hover:bg-slate-50/80'
+                      }`}
                     >
                       {/* Date & ID */}
                       <td className="py-3.5 px-4 whitespace-nowrap">

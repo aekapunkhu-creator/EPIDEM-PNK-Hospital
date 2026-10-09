@@ -66,6 +66,32 @@ export async function signOutFirebase(): Promise<void> {
   }
 }
 
+/**
+ * Recursively removes `undefined` properties and replaces them or excludes them,
+ * preventing FirebaseError: Function setDoc() called with invalid data. Unsupported field value: undefined.
+ */
+export function sanitizeForFirestore<T>(data: T): T {
+  if (data === null || data === undefined) {
+    return null as any;
+  }
+  if (Array.isArray(data)) {
+    return data
+      .filter(item => item !== undefined)
+      .map(item => sanitizeForFirestore(item)) as any;
+  }
+  if (typeof data === 'object') {
+    if (data instanceof Date) return data as any;
+    const result: any = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) {
+        result[key] = sanitizeForFirestore(value);
+      }
+    }
+    return result;
+  }
+  return data;
+}
+
 // Subscribe real-time collections
 export function subscribePatients(onData: (data: Patient[]) => void, onError?: (err: any) => void) {
   const colRef = collection(db, 'patients');
@@ -181,14 +207,15 @@ export async function saveAllTbcxrScreeningsToFirestore(screenings: TbCxrScreeni
   try {
     const batch = writeBatch(db);
     screenings.forEach(s => {
+      const cleanData = sanitizeForFirestore(s);
       const docRef = doc(db, 'tbcxr_screenings', s.id);
-      batch.set(docRef, s);
+      batch.set(docRef, cleanData);
     });
     await batch.commit();
 
     try {
-      const map: Record<string, TbCxrScreeningRecord> = {};
-      screenings.forEach(s => { map[s.id] = s; });
+      const map: Record<string, any> = {};
+      screenings.forEach(s => { map[s.id] = sanitizeForFirestore(s); });
       await rtdbSet(rtdbRef(rtdb, 'tbcxr_screenings'), map);
     } catch (e) {}
   } catch (e) {
@@ -198,11 +225,12 @@ export async function saveAllTbcxrScreeningsToFirestore(screenings: TbCxrScreeni
 
 export async function saveTbcxrScreeningToFirestore(screening: TbCxrScreeningRecord) {
   try {
+    const cleanData = sanitizeForFirestore(screening);
     const docRef = doc(db, 'tbcxr_screenings', screening.id);
-    await setDoc(docRef, screening);
+    await setDoc(docRef, cleanData, { merge: true });
 
     try {
-      await rtdbSet(rtdbRef(rtdb, `tbcxr_screenings/${screening.id}`), screening);
+      await rtdbSet(rtdbRef(rtdb, `tbcxr_screenings/${screening.id}`), cleanData);
     } catch (e) {}
   } catch (e) {
     console.error('Error saving tbcxr screening to firestore', e);
@@ -228,14 +256,14 @@ export async function saveAllPatientsToFirestore(patients: Patient[]) {
     const batch = writeBatch(db);
     patients.forEach(p => {
       const docRef = doc(db, 'patients', p.id);
-      batch.set(docRef, p);
+      batch.set(docRef, sanitizeForFirestore(p));
     });
     await batch.commit();
 
     // Also sync to Realtime Database
     try {
       const patientsMap: Record<string, Patient> = {};
-      patients.forEach(p => { patientsMap[p.id] = p; });
+      patients.forEach(p => { patientsMap[p.id] = sanitizeForFirestore(p); });
       await rtdbSet(rtdbRef(rtdb, 'patients'), patientsMap);
     } catch (rtdbErr) {
       // Ignored if RTDB rules are currently locked
@@ -250,13 +278,13 @@ export async function saveAllContactsToFirestore(contacts: HouseholdContact[]) {
     const batch = writeBatch(db);
     contacts.forEach(c => {
       const docRef = doc(db, 'contacts', c.id);
-      batch.set(docRef, c);
+      batch.set(docRef, sanitizeForFirestore(c));
     });
     await batch.commit();
 
     try {
       const contactsMap: Record<string, HouseholdContact> = {};
-      contacts.forEach(c => { contactsMap[c.id] = c; });
+      contacts.forEach(c => { contactsMap[c.id] = sanitizeForFirestore(c); });
       await rtdbSet(rtdbRef(rtdb, 'contacts'), contactsMap);
     } catch (rtdbErr) {}
   } catch (e) {

@@ -268,11 +268,46 @@ export default function App() {
     // 9. Subscribe TBCXR Screenings (7 Risk Groups)
     const unsubScreenings = subscribeTbcxrScreenings((data) => {
       if (data && data.length > 0) {
-        setTbcxrScreenings(data);
+        setTbcxrScreenings(prev => {
+          // Merge strategy: preserve any local items that haven't synced yet or are newer
+          const remoteMap = new Map(data.map(d => [d.id, d]));
+          const merged = [...data];
+
+          prev.forEach(localItem => {
+            if (!remoteMap.has(localItem.id)) {
+              // Local item not yet in firestore: preserve and sync
+              merged.unshift(localItem);
+              saveTbcxrScreeningToFirestore(localItem);
+            } else {
+              const remoteItem = remoteMap.get(localItem.id)!;
+              const localTime = new Date(localItem.updatedAt || localItem.createdAt || 0).getTime();
+              const remoteTime = new Date(remoteItem.updatedAt || remoteItem.createdAt || 0).getTime();
+              if (localTime > remoteTime) {
+                const idx = merged.findIndex(m => m.id === localItem.id);
+                if (idx !== -1) merged[idx] = localItem;
+                saveTbcxrScreeningToFirestore(localItem);
+              }
+            }
+          });
+          safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(merged));
+          return merged;
+        });
       } else if (data && data.length === 0) {
-        // Seed initial data to firestore if empty
-        saveAllTbcxrScreeningsToFirestore(INITIAL_TBCXR_SCREENINGS);
-        setTbcxrScreenings(INITIAL_TBCXR_SCREENINGS);
+        // Seed initial data to firestore if empty, but check localStorage first!
+        const saved = safeStorage.getItem('tb_phon_tbcxr_screenings_v1');
+        let localData: TbCxrScreeningRecord[] = [];
+        if (saved) {
+          try {
+            localData = JSON.parse(saved);
+          } catch (e) {}
+        }
+        if (localData && localData.length > 0) {
+          saveAllTbcxrScreeningsToFirestore(localData);
+          setTbcxrScreenings(localData);
+        } else {
+          saveAllTbcxrScreeningsToFirestore(INITIAL_TBCXR_SCREENINGS);
+          setTbcxrScreenings(INITIAL_TBCXR_SCREENINGS);
+        }
       }
     });
 
@@ -730,18 +765,31 @@ export default function App() {
 
   // TBCXR Screening Handlers (7 Risk Groups)
   const handleAddTbcxrScreening = (newRec: TbCxrScreeningRecord) => {
-    setTbcxrScreenings(prev => [newRec, ...prev]);
+    setTbcxrScreenings(prev => {
+      const exists = prev.some(s => s.id === newRec.id);
+      const updated = exists ? prev.map(s => s.id === newRec.id ? newRec : s) : [newRec, ...prev];
+      safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(updated));
+      return updated;
+    });
     saveTbcxrScreeningToFirestore(newRec);
     showToast(`บันทึกการคัดกรอง TBCXR สำเร็จ: ${newRec.prefix}${newRec.firstName} ${newRec.lastName}`);
   };
 
   const handleUpdateTbcxrScreening = (updatedRec: TbCxrScreeningRecord) => {
-    setTbcxrScreenings(prev => prev.map(s => s.id === updatedRec.id ? updatedRec : s));
+    setTbcxrScreenings(prev => {
+      const updated = prev.map(s => s.id === updatedRec.id ? updatedRec : s);
+      safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(updated));
+      return updated;
+    });
     saveTbcxrScreeningToFirestore(updatedRec);
   };
 
   const handleDeleteTbcxrScreening = (screeningId: string) => {
-    setTbcxrScreenings(prev => prev.filter(s => s.id !== screeningId));
+    setTbcxrScreenings(prev => {
+      const updated = prev.filter(s => s.id !== screeningId);
+      safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(updated));
+      return updated;
+    });
     deleteTbcxrScreeningFromFirestore(screeningId);
   };
 
