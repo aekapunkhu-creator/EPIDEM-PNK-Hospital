@@ -92,6 +92,59 @@ export function sanitizeForFirestore<T>(data: T): T {
   return data;
 }
 
+// Track Firestore quota state to prevent infinite error backoffs and unneeded network hammering
+let _isFirestoreQuotaExhausted = false;
+
+export function isQuotaExhaustedError(err: any): boolean {
+  if (!err) return false;
+  return (
+    err.code === 'resource-exhausted' ||
+    (typeof err.message === 'string' && (
+      err.message.includes('Quota limit exceeded') ||
+      err.message.includes('resource-exhausted') ||
+      err.message.includes('Free daily write units')
+    ))
+  );
+}
+
+export function isFirestoreQuotaExhausted(): boolean {
+  if (_isFirestoreQuotaExhausted) return true;
+  if (typeof sessionStorage !== 'undefined') {
+    const flag = sessionStorage.getItem('tb_phon_firestore_quota_exhausted');
+    if (flag) {
+      const timestamp = parseInt(flag, 10);
+      if (!isNaN(timestamp) && (Date.now() - timestamp < 12 * 60 * 60 * 1000)) {
+        _isFirestoreQuotaExhausted = true;
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function markFirestoreQuotaExhausted() {
+  if (!_isFirestoreQuotaExhausted) {
+    _isFirestoreQuotaExhausted = true;
+    if (typeof sessionStorage !== 'undefined') {
+      try {
+        sessionStorage.setItem('tb_phon_firestore_quota_exhausted', Date.now().toString());
+      } catch (e) {}
+    }
+    console.warn('[Firestore] Daily free tier write quota reached. System is operating safely in local safeStorage & RTDB mode.');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('firestore-quota-exceeded'));
+    }
+  }
+}
+
+export function handleFirestoreError(operationName: string, error: any) {
+  if (isQuotaExhaustedError(error)) {
+    markFirestoreQuotaExhausted();
+    return;
+  }
+  console.warn(`Firestore [${operationName}]:`, error?.message || error);
+}
+
 // Subscribe real-time collections
 export function subscribePatients(onData: (data: Patient[]) => void, onError?: (err: any) => void) {
   const colRef = collection(db, 'patients');
@@ -102,7 +155,7 @@ export function subscribePatients(onData: (data: Patient[]) => void, onError?: (
     });
     onData(items);
   }, (err) => {
-    console.error('Patients snapshot error:', err);
+    handleFirestoreError('subscribePatients', err);
     if (onError) onError(err);
   });
 }
@@ -116,7 +169,7 @@ export function subscribeContacts(onData: (data: HouseholdContact[]) => void, on
     });
     onData(items);
   }, (err) => {
-    console.error('Contacts snapshot error:', err);
+    handleFirestoreError('subscribeContacts', err);
     if (onError) onError(err);
   });
 }
@@ -130,7 +183,7 @@ export function subscribeUsers(onData: (data: UserAccount[]) => void, onError?: 
     });
     onData(items);
   }, (err) => {
-    console.error('Users snapshot error:', err);
+    handleFirestoreError('subscribeUsers', err);
     if (onError) onError(err);
   });
 }
@@ -142,7 +195,7 @@ export function subscribeLineConfig(onData: (data: LineNotificationConfig) => vo
       onData(docSnap.data() as LineNotificationConfig);
     }
   }, (err) => {
-    console.error('LineConfig snapshot error:', err);
+    handleFirestoreError('subscribeLineConfig', err);
     if (onError) onError(err);
   });
 }
@@ -156,7 +209,7 @@ export function subscribeLogs(onData: (data: NotificationLog[]) => void, onError
     });
     onData(items);
   }, (err) => {
-    console.error('Logs snapshot error:', err);
+    handleFirestoreError('subscribeLogs', err);
     if (onError) onError(err);
   });
 }
@@ -170,7 +223,7 @@ export function subscribeInvestigations(onData: (data: InvestigationRecord[]) =>
     });
     onData(items);
   }, (err) => {
-    console.error('Investigations snapshot error:', err);
+    handleFirestoreError('subscribeInvestigations', err);
     if (onError) onError(err);
   });
 }
@@ -184,7 +237,7 @@ export function subscribeHomeVisits(onData: (data: HomeVisitRecord[]) => void, o
     });
     onData(items);
   }, (err) => {
-    console.error('HomeVisits snapshot error:', err);
+    handleFirestoreError('subscribeHomeVisits', err);
     if (onError) onError(err);
   });
 }
@@ -198,13 +251,21 @@ export function subscribeTbcxrScreenings(onData: (data: TbCxrScreeningRecord[]) 
     });
     onData(items);
   }, (err) => {
-    console.error('TbcxrScreenings snapshot error:', err);
+    handleFirestoreError('subscribeTbcxrScreenings', err);
     if (onError) onError(err);
   });
 }
 
 export async function saveAllTbcxrScreeningsToFirestore(screenings: TbCxrScreeningRecord[]) {
   try {
+    try {
+      const map: Record<string, any> = {};
+      screenings.forEach(s => { map[s.id] = sanitizeForFirestore(s); });
+      await rtdbSet(rtdbRef(rtdb, 'tbcxr_screenings'), map);
+    } catch (e) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const batch = writeBatch(db);
     screenings.forEach(s => {
       const cleanData = sanitizeForFirestore(s);
@@ -212,303 +273,349 @@ export async function saveAllTbcxrScreeningsToFirestore(screenings: TbCxrScreeni
       batch.set(docRef, cleanData);
     });
     await batch.commit();
-
-    try {
-      const map: Record<string, any> = {};
-      screenings.forEach(s => { map[s.id] = sanitizeForFirestore(s); });
-      await rtdbSet(rtdbRef(rtdb, 'tbcxr_screenings'), map);
-    } catch (e) {}
   } catch (e) {
-    console.error('Error saving tbcxr screenings to firestore', e);
+    handleFirestoreError('saveAllTbcxrScreeningsToFirestore', e);
   }
 }
 
 export async function saveTbcxrScreeningToFirestore(screening: TbCxrScreeningRecord) {
   try {
     const cleanData = sanitizeForFirestore(screening);
-    const docRef = doc(db, 'tbcxr_screenings', screening.id);
-    await setDoc(docRef, cleanData, { merge: true });
-
     try {
       await rtdbSet(rtdbRef(rtdb, `tbcxr_screenings/${screening.id}`), cleanData);
     } catch (e) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'tbcxr_screenings', screening.id);
+    await setDoc(docRef, cleanData, { merge: true });
   } catch (e) {
-    console.error('Error saving tbcxr screening to firestore', e);
+    handleFirestoreError('saveTbcxrScreeningToFirestore', e);
   }
 }
 
 export async function deleteTbcxrScreeningFromFirestore(screeningId: string) {
   try {
-    const docRef = doc(db, 'tbcxr_screenings', screeningId);
-    await deleteDoc(docRef);
-
     try {
       await rtdbRemove(rtdbRef(rtdb, `tbcxr_screenings/${screeningId}`));
     } catch (e) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'tbcxr_screenings', screeningId);
+    await deleteDoc(docRef);
   } catch (e) {
-    console.error('Error deleting tbcxr screening from firestore', e);
+    handleFirestoreError('deleteTbcxrScreeningFromFirestore', e);
   }
 }
 
 // Bulk Save / Seed Functions
 export async function saveAllPatientsToFirestore(patients: Patient[]) {
   try {
+    try {
+      const patientsMap: Record<string, Patient> = {};
+      patients.forEach(p => { patientsMap[p.id] = sanitizeForFirestore(p); });
+      await rtdbSet(rtdbRef(rtdb, 'patients'), patientsMap);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const batch = writeBatch(db);
     patients.forEach(p => {
       const docRef = doc(db, 'patients', p.id);
       batch.set(docRef, sanitizeForFirestore(p));
     });
     await batch.commit();
-
-    // Also sync to Realtime Database
-    try {
-      const patientsMap: Record<string, Patient> = {};
-      patients.forEach(p => { patientsMap[p.id] = sanitizeForFirestore(p); });
-      await rtdbSet(rtdbRef(rtdb, 'patients'), patientsMap);
-    } catch (rtdbErr) {
-      // Ignored if RTDB rules are currently locked
-    }
   } catch (e) {
-    console.error('Error saving patients to firestore', e);
+    handleFirestoreError('saveAllPatientsToFirestore', e);
   }
 }
 
 export async function saveAllContactsToFirestore(contacts: HouseholdContact[]) {
   try {
+    try {
+      const contactsMap: Record<string, HouseholdContact> = {};
+      contacts.forEach(c => { contactsMap[c.id] = sanitizeForFirestore(c); });
+      await rtdbSet(rtdbRef(rtdb, 'contacts'), contactsMap);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const batch = writeBatch(db);
     contacts.forEach(c => {
       const docRef = doc(db, 'contacts', c.id);
       batch.set(docRef, sanitizeForFirestore(c));
     });
     await batch.commit();
-
-    try {
-      const contactsMap: Record<string, HouseholdContact> = {};
-      contacts.forEach(c => { contactsMap[c.id] = sanitizeForFirestore(c); });
-      await rtdbSet(rtdbRef(rtdb, 'contacts'), contactsMap);
-    } catch (rtdbErr) {}
   } catch (e) {
-    console.error('Error saving contacts to firestore', e);
+    handleFirestoreError('saveAllContactsToFirestore', e);
   }
 }
 
 export async function saveAllUsersToFirestore(users: UserAccount[]) {
   try {
+    try {
+      const usersMap: Record<string, UserAccount> = {};
+      users.forEach(u => { usersMap[u.id] = u; });
+      await rtdbSet(rtdbRef(rtdb, 'users'), usersMap);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const batch = writeBatch(db);
     users.forEach(u => {
       const docRef = doc(db, 'users', u.id);
       batch.set(docRef, u);
     });
     await batch.commit();
-
-    try {
-      const usersMap: Record<string, UserAccount> = {};
-      users.forEach(u => { usersMap[u.id] = u; });
-      await rtdbSet(rtdbRef(rtdb, 'users'), usersMap);
-    } catch (rtdbErr) {}
   } catch (e) {
-    console.error('Error saving users to firestore', e);
+    handleFirestoreError('saveAllUsersToFirestore', e);
   }
 }
 
 export async function saveLineConfigToFirestore(config: LineNotificationConfig) {
   try {
-    const docRef = doc(db, 'config', 'lineConfig');
-    await setDoc(docRef, config);
-
     try {
       await rtdbSet(rtdbRef(rtdb, 'config/lineConfig'), config);
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'config', 'lineConfig');
+    await setDoc(docRef, config);
   } catch (e) {
-    console.error('Error saving line config to firestore', e);
+    handleFirestoreError('saveLineConfigToFirestore', e);
   }
 }
 
 export async function saveAllLogsToFirestore(logs: NotificationLog[]) {
   try {
+    try {
+      const logsMap: Record<string, NotificationLog> = {};
+      logs.forEach(l => { logsMap[l.id] = l; });
+      await rtdbSet(rtdbRef(rtdb, 'logs'), logsMap);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const batch = writeBatch(db);
     logs.forEach(l => {
       const docRef = doc(db, 'logs', l.id);
       batch.set(docRef, l);
     });
     await batch.commit();
-
-    try {
-      const logsMap: Record<string, NotificationLog> = {};
-      logs.forEach(l => { logsMap[l.id] = l; });
-      await rtdbSet(rtdbRef(rtdb, 'logs'), logsMap);
-    } catch (rtdbErr) {}
   } catch (e) {
-    console.error('Error saving logs to firestore', e);
+    handleFirestoreError('saveAllLogsToFirestore', e);
+  }
+}
+
+export async function saveLogToFirestore(log: NotificationLog) {
+  try {
+    try {
+      await rtdbSet(rtdbRef(rtdb, `logs/${log.id}`), log);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'logs', log.id);
+    await setDoc(docRef, log);
+  } catch (e) {
+    handleFirestoreError('saveLogToFirestore', e);
   }
 }
 
 // Single Item Persistence Helpers
 export async function savePatientToFirestore(patient: Patient) {
   try {
-    const docRef = doc(db, 'patients', patient.id);
-    await setDoc(docRef, patient);
-
+    const cleanData = sanitizeForFirestore(patient);
     try {
-      await rtdbSet(rtdbRef(rtdb, `patients/${patient.id}`), patient);
+      await rtdbSet(rtdbRef(rtdb, `patients/${patient.id}`), cleanData);
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'patients', patient.id);
+    await setDoc(docRef, cleanData);
   } catch (e) {
-    console.error('Error saving patient to firestore', e);
+    handleFirestoreError('savePatientToFirestore', e);
   }
 }
 
 export async function deletePatientFromFirestore(patientId: string) {
   try {
-    const docRef = doc(db, 'patients', patientId);
-    await deleteDoc(docRef);
-
     try {
       await rtdbRemove(rtdbRef(rtdb, `patients/${patientId}`));
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'patients', patientId);
+    await deleteDoc(docRef);
   } catch (e) {
-    console.error('Error deleting patient from firestore', e);
+    handleFirestoreError('deletePatientFromFirestore', e);
   }
 }
 
 export async function saveContactToFirestore(contact: HouseholdContact) {
   try {
-    const docRef = doc(db, 'contacts', contact.id);
-    await setDoc(docRef, contact);
-
+    const cleanData = sanitizeForFirestore(contact);
     try {
-      await rtdbSet(rtdbRef(rtdb, `contacts/${contact.id}`), contact);
+      await rtdbSet(rtdbRef(rtdb, `contacts/${contact.id}`), cleanData);
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'contacts', contact.id);
+    await setDoc(docRef, cleanData);
   } catch (e) {
-    console.error('Error saving contact to firestore', e);
+    handleFirestoreError('saveContactToFirestore', e);
   }
 }
 
 export async function deleteContactFromFirestore(contactId: string) {
   try {
-    const docRef = doc(db, 'contacts', contactId);
-    await deleteDoc(docRef);
-
     try {
       await rtdbRemove(rtdbRef(rtdb, `contacts/${contactId}`));
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'contacts', contactId);
+    await deleteDoc(docRef);
   } catch (e) {
-    console.error('Error deleting contact from firestore', e);
+    handleFirestoreError('deleteContactFromFirestore', e);
   }
 }
 
 export async function saveUserToFirestore(user: UserAccount) {
   try {
-    const docRef = doc(db, 'users', user.id);
-    await setDoc(docRef, user);
-
     try {
       await rtdbSet(rtdbRef(rtdb, `users/${user.id}`), user);
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'users', user.id);
+    await setDoc(docRef, user);
   } catch (e) {
-    console.error('Error saving user to firestore', e);
+    handleFirestoreError('saveUserToFirestore', e);
   }
 }
 
 export async function deleteUserFromFirestore(userId: string) {
   try {
-    const docRef = doc(db, 'users', userId);
-    await deleteDoc(docRef);
-
     try {
       await rtdbRemove(rtdbRef(rtdb, `users/${userId}`));
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'users', userId);
+    await deleteDoc(docRef);
   } catch (e) {
-    console.error('Error deleting user from firestore', e);
+    handleFirestoreError('deleteUserFromFirestore', e);
   }
 }
 
 export async function saveAllInvestigationsToFirestore(investigations: InvestigationRecord[]) {
   try {
+    try {
+      const map: Record<string, InvestigationRecord> = {};
+      investigations.forEach(inv => { map[inv.id] = inv; });
+      await rtdbSet(rtdbRef(rtdb, 'investigations'), map);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const batch = writeBatch(db);
     investigations.forEach(inv => {
       const docRef = doc(db, 'investigations', inv.id);
       batch.set(docRef, inv);
     });
     await batch.commit();
-
-    try {
-      const map: Record<string, InvestigationRecord> = {};
-      investigations.forEach(inv => { map[inv.id] = inv; });
-      await rtdbSet(rtdbRef(rtdb, 'investigations'), map);
-    } catch (rtdbErr) {}
   } catch (e) {
-    console.error('Error saving investigations to firestore', e);
+    handleFirestoreError('saveAllInvestigationsToFirestore', e);
   }
 }
 
 export async function saveInvestigationToFirestore(investigation: InvestigationRecord) {
   try {
-    const docRef = doc(db, 'investigations', investigation.id);
-    await setDoc(docRef, investigation);
-
     try {
       await rtdbSet(rtdbRef(rtdb, `investigations/${investigation.id}`), investigation);
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'investigations', investigation.id);
+    await setDoc(docRef, investigation);
   } catch (e) {
-    console.error('Error saving investigation to firestore', e);
+    handleFirestoreError('saveInvestigationToFirestore', e);
   }
 }
 
 export async function deleteInvestigationFromFirestore(investigationId: string) {
   try {
-    const docRef = doc(db, 'investigations', investigationId);
-    await deleteDoc(docRef);
-
     try {
       await rtdbRemove(rtdbRef(rtdb, `investigations/${investigationId}`));
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'investigations', investigationId);
+    await deleteDoc(docRef);
   } catch (e) {
-    console.error('Error deleting investigation from firestore', e);
+    handleFirestoreError('deleteInvestigationFromFirestore', e);
   }
 }
 
 export async function saveAllHomeVisitsToFirestore(homeVisits: HomeVisitRecord[]) {
   try {
+    try {
+      const map: Record<string, HomeVisitRecord> = {};
+      homeVisits.forEach(hv => { map[hv.id] = hv; });
+      await rtdbSet(rtdbRef(rtdb, 'homeVisits'), map);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const batch = writeBatch(db);
     homeVisits.forEach(hv => {
       const docRef = doc(db, 'homeVisits', hv.id);
       batch.set(docRef, hv);
     });
     await batch.commit();
-
-    try {
-      const map: Record<string, HomeVisitRecord> = {};
-      homeVisits.forEach(hv => { map[hv.id] = hv; });
-      await rtdbSet(rtdbRef(rtdb, 'homeVisits'), map);
-    } catch (rtdbErr) {}
   } catch (e) {
-    console.error('Error saving home visits to firestore', e);
+    handleFirestoreError('saveAllHomeVisitsToFirestore', e);
   }
 }
 
 export async function saveHomeVisitToFirestore(homeVisit: HomeVisitRecord) {
   try {
-    const docRef = doc(db, 'homeVisits', homeVisit.id);
-    await setDoc(docRef, homeVisit);
-
     try {
       await rtdbSet(rtdbRef(rtdb, `homeVisits/${homeVisit.id}`), homeVisit);
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'homeVisits', homeVisit.id);
+    await setDoc(docRef, homeVisit);
   } catch (e) {
-    console.error('Error saving home visit to firestore', e);
+    handleFirestoreError('saveHomeVisitToFirestore', e);
   }
 }
 
 export async function deleteHomeVisitFromFirestore(homeVisitId: string) {
   try {
-    const docRef = doc(db, 'homeVisits', homeVisitId);
-    await deleteDoc(docRef);
-
     try {
       await rtdbRemove(rtdbRef(rtdb, `homeVisits/${homeVisitId}`));
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'homeVisits', homeVisitId);
+    await deleteDoc(docRef);
   } catch (e) {
-    console.error('Error deleting home visit from firestore', e);
+    handleFirestoreError('deleteHomeVisitFromFirestore', e);
   }
 }
 
@@ -545,6 +652,12 @@ export async function fetchPatientByIdFromFirestore(idOrHn: string): Promise<Pat
 
 export async function clearCollectionInFirestore(collectionName: string) {
   try {
+    try {
+      await rtdbRemove(rtdbRef(rtdb, collectionName));
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const colRef = collection(db, collectionName);
     const snap = await getDocs(colRef);
     if (!snap.empty) {
@@ -554,12 +667,8 @@ export async function clearCollectionInFirestore(collectionName: string) {
       });
       await batch.commit();
     }
-
-    try {
-      await rtdbRemove(rtdbRef(rtdb, collectionName));
-    } catch (rtdbErr) {}
   } catch (e) {
-    console.error(`Error clearing collection ${collectionName} in firestore`, e);
+    handleFirestoreError(`clearCollectionInFirestore(${collectionName})`, e);
   }
 }
 
@@ -626,15 +735,16 @@ export function subscribeCallById(
 
 export async function saveCallSessionToFirestore(call: VideoCallSession) {
   try {
-    const docRef = doc(db, 'calls', call.id);
-    await setDoc(docRef, call, { merge: true });
-
-    // Fallback sync to RTDB
     try {
       await rtdbSet(rtdbRef(rtdb, `calls/${call.id}`), call);
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'calls', call.id);
+    await setDoc(docRef, call, { merge: true });
   } catch (e) {
-    console.error('Error saving call session to firestore', e);
+    handleFirestoreError('saveCallSessionToFirestore', e);
   }
 }
 
@@ -644,6 +754,12 @@ export async function updateCallStatus(
   extra: Partial<VideoCallSession> = {}
 ) {
   try {
+    try {
+      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/status`), status);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const docRef = doc(db, 'calls', callId);
     const updateData: any = {
       status,
@@ -656,12 +772,8 @@ export async function updateCallStatus(
       updateData.endedAt = new Date().toISOString();
     }
     await setDoc(docRef, updateData, { merge: true });
-
-    try {
-      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/status`), status);
-    } catch (rtdbErr) {}
   } catch (e) {
-    console.error('Error updating call status', e);
+    handleFirestoreError('updateCallStatus', e);
   }
 }
 
@@ -672,50 +784,69 @@ export async function addCallIceCandidate(
 ) {
   try {
     if (!candidate || !candidate.candidate) return;
+
+    try {
+      const sanitizedKey = candidate.candidate.replace(/[.#$/[\]]/g, '_').substring(0, 40);
+      const key = role === 'caller' ? 'callerIceCandidates' : 'calleeIceCandidates';
+      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/${key}/${sanitizedKey}`), candidate);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const docRef = doc(db, 'calls', callId);
     const key = role === 'caller' ? 'callerIceCandidates' : 'calleeIceCandidates';
     await setDoc(docRef, {
       [key]: arrayUnion(candidate)
     }, { merge: true });
-
-    try {
-      const sanitizedKey = candidate.candidate.replace(/[.#$/[\]]/g, '_').substring(0, 40);
-      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/${key}/${sanitizedKey}`), candidate);
-    } catch (rtdbErr) {}
   } catch (e) {
-    console.error('Error adding ICE candidate', e);
+    handleFirestoreError('addCallIceCandidate', e);
   }
 }
 
 export async function addCallMessage(callId: string, message: CallChatMessage) {
   try {
+    try {
+      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/messages/${message.id}`), message);
+    } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const docRef = doc(db, 'calls', callId);
     await setDoc(docRef, {
       messages: arrayUnion(message)
     }, { merge: true });
-
-    try {
-      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/messages/${message.id}`), message);
-    } catch (rtdbErr) {}
   } catch (e) {
-    console.error('Error adding call message', e);
+    handleFirestoreError('addCallMessage', e);
   }
 }
 
 export async function deleteCallSession(callId: string) {
   try {
-    const docRef = doc(db, 'calls', callId);
-    await deleteDoc(docRef);
     try {
       await rtdbRemove(rtdbRef(rtdb, `calls/${callId}`));
     } catch (rtdbErr) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const docRef = doc(db, 'calls', callId);
+    await deleteDoc(docRef);
   } catch (e) {
-    console.error('Error deleting call session from firestore', e);
+    handleFirestoreError('deleteCallSession', e);
   }
 }
 
 export async function fetchCallSessionById(callId: string): Promise<VideoCallSession | null> {
   try {
+    if (isFirestoreQuotaExhausted()) {
+      try {
+        const rtdbSnap = await rtdbGet(rtdbRef(rtdb, `calls/${callId}`));
+        if (rtdbSnap.exists()) {
+          return rtdbSnap.val() as VideoCallSession;
+        }
+      } catch (rtdbErr) {}
+      return null;
+    }
+
     const docRef = doc(db, 'calls', callId);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
@@ -729,7 +860,7 @@ export async function fetchCallSessionById(callId: string): Promise<VideoCallSes
     } catch (rtdbErr) {}
     return null;
   } catch (e) {
-    console.error('Error fetching call session by ID', e);
+    handleFirestoreError('fetchCallSessionById', e);
     return null;
   }
 }
@@ -740,6 +871,12 @@ export async function fetchCallSessionById(callId: string): Promise<VideoCallSes
 
 export async function joinRoomParticipant(callId: string, participant: CallParticipant) {
   try {
+    try {
+      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/participants/${participant.peerId}`), participant);
+    } catch (e) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const participantDoc = doc(db, 'calls', callId, 'participants', participant.peerId);
     await setDoc(participantDoc, participant, { merge: true });
 
@@ -750,25 +887,23 @@ export async function joinRoomParticipant(callId: string, participant: CallParti
       status: 'connected',
       updatedAt: new Date().toISOString()
     }, { merge: true });
-
-    try {
-      await rtdbSet(rtdbRef(rtdb, `calls/${callId}/participants/${participant.peerId}`), participant);
-    } catch (e) {}
   } catch (e) {
-    console.error('Error joining room participant', e);
+    handleFirestoreError('joinRoomParticipant', e);
   }
 }
 
 export async function leaveRoomParticipant(callId: string, peerId: string) {
   try {
-    const participantDoc = doc(db, 'calls', callId, 'participants', peerId);
-    await deleteDoc(participantDoc);
-
     try {
       await rtdbRemove(rtdbRef(rtdb, `calls/${callId}/participants/${peerId}`));
     } catch (e) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const participantDoc = doc(db, 'calls', callId, 'participants', peerId);
+    await deleteDoc(participantDoc);
   } catch (e) {
-    console.error('Error leaving room participant', e);
+    handleFirestoreError('leaveRoomParticipant', e);
   }
 }
 
@@ -778,17 +913,19 @@ export async function updateParticipantState(
   state: Partial<CallParticipant>
 ) {
   try {
-    const participantDoc = doc(db, 'calls', callId, 'participants', peerId);
-    await setDoc(participantDoc, state, { merge: true });
-
     try {
       await rtdbSet(rtdbRef(rtdb, `calls/${callId}/participants/${peerId}/isMuted`), state.isMuted ?? false);
       if (state.isVideoOff !== undefined) {
         await rtdbSet(rtdbRef(rtdb, `calls/${callId}/participants/${peerId}/isVideoOff`), state.isVideoOff);
       }
     } catch (e) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
+    const participantDoc = doc(db, 'calls', callId, 'participants', peerId);
+    await setDoc(participantDoc, state, { merge: true });
   } catch (e) {
-    console.error('Error updating participant state', e);
+    handleFirestoreError('updateParticipantState', e);
   }
 }
 
@@ -804,7 +941,7 @@ export function subscribeRoomParticipants(
     });
     callback(list);
   }, (err) => {
-    console.warn('Error subscribing to participants:', err);
+    handleFirestoreError('subscribeRoomParticipants', err);
     // RTDB fallback
     try {
       rtdbOnValue(rtdbRef(rtdb, `calls/${callId}/participants`), (snap) => {
@@ -822,17 +959,19 @@ export function subscribeRoomParticipants(
 
 export async function sendRoomSignal(callId: string, signal: MultiPeerSignal) {
   try {
+    try {
+      await rtdbPush(rtdbRef(rtdb, `calls/${callId}/signals/${signal.toPeerId}`), signal);
+    } catch (e) {}
+
+    if (isFirestoreQuotaExhausted()) return;
+
     const sigCol = collection(db, 'calls', callId, 'signals');
     await addDoc(sigCol, {
       ...signal,
       createdAt: Date.now()
     });
-
-    try {
-      await rtdbPush(rtdbRef(rtdb, `calls/${callId}/signals/${signal.toPeerId}`), signal);
-    } catch (e) {}
   } catch (e) {
-    console.error('Error sending room signal', e);
+    handleFirestoreError('sendRoomSignal', e);
   }
 }
 

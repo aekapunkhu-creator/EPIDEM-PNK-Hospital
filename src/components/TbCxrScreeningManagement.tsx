@@ -315,6 +315,8 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
       notes: formData.notes || '',
       screenerName: formData.screenerName || (currentUser ? currentUser.fullName : 'เจ้าหน้าที่ผู้คัดกรอง'),
       screenerRole: formData.screenerRole || (currentUser ? currentUser.role : 'Staff'),
+      isUserSaved: true,
+      isSystemMock: false,
       createdAt: editingRecord?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };

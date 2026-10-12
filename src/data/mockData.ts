@@ -337,7 +337,19 @@ export const MOCK_TBCXR_IDS = [
 
 export const isSystemMockScreening = (s: Partial<TbCxrScreeningRecord> | null | undefined): boolean => {
   if (!s || !s.id) return false;
-  return MOCK_TBCXR_IDS.includes(s.id);
+  // If explicitly recorded, edited, or confirmed by user, it is NEVER a system mock record!
+  if (s.isUserSaved || (s as any).userSaved || (s as any).isUserCreated) {
+    return false;
+  }
+  // If explicitly flagged as mock
+  if (s.isSystemMock || (s as any).isMock) {
+    return true;
+  }
+  // If ID matches initial sample IDs AND has not been marked as saved by user
+  if (MOCK_TBCXR_IDS.includes(s.id)) {
+    return true;
+  }
+  return false;
 };
 
 export const INITIAL_TBCXR_SCREENINGS: TbCxrScreeningRecord[] = [];

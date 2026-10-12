@@ -51,6 +51,8 @@ import {
   saveLineConfigToFirestore,
   saveAllLogsToFirestore,
   saveAllTbcxrScreeningsToFirestore,
+  saveLogToFirestore,
+  isFirestoreQuotaExhausted,
   savePatientToFirestore,
   deletePatientFromFirestore,
   saveContactToFirestore,
@@ -67,7 +69,7 @@ import {
   fetchPatientByIdFromFirestore
 } from './services/firebaseStore';
 import { safeStorage } from './utils/safeStorage';
-import { INITIAL_TBCXR_SCREENINGS, MOCK_TBCXR_IDS, isSystemMockScreening } from './data/mockData';
+import { isSystemMockScreening } from './data/mockData';
 
 const MOCK_PATIENT_IDS = ['TB-6701', 'TB-6702', 'TB-6703', 'TB-6704', 'TB-6705'];
 const MOCK_CONTACT_IDS = ['CT-101', 'CT-102', 'CT-103', 'CT-104'];
@@ -78,8 +80,17 @@ export default function App() {
 
   // Application Persistent State
   const [patients, setPatients] = useState<Patient[]>(() => {
-    safeStorage.removeItem('tb_phon_patients_v2');
-    safeStorage.removeItem('tb_phon_patients_v3');
+    const saved = safeStorage.getItem('tb_phon_patients_v3');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((p: Patient) => !MOCK_PATIENT_IDS.includes(p.id));
+        }
+      } catch (e) {
+        console.error('Error loading patients from storage', e);
+      }
+    }
     return [];
   });
 
@@ -120,12 +131,16 @@ export default function App() {
   });
 
   const [tbcxrScreenings, setTbcxrScreenings] = useState<TbCxrScreeningRecord[]>(() => {
-    const saved = safeStorage.getItem('tb_phon_tbcxr_screenings_v1');
+    const saved = safeStorage.getItem('tb_phon_tbcxr_screenings_v1') || 
+                  safeStorage.getItem('tb_phon_tbcxr_screenings_backup') ||
+                  safeStorage.getItem('tb_phon_tbcxr_screenings');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const cleaned = parsed.filter(s => !isSystemMockScreening(s));
+          const cleaned = parsed
+            .filter(s => !isSystemMockScreening(s))
+            .map(s => ({ ...s, isUserSaved: true }));
           safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(cleaned));
           return cleaned;
         }
@@ -171,14 +186,16 @@ export default function App() {
   const [isUserMgmtOpen, setIsUserMgmtOpen] = useState(false);
   const [isFirestoreReady, setIsFirestoreReady] = useState(false);
   const [hasGmpQuotaNotice, setHasGmpQuotaNotice] = useState(false);
+  const [hasFirestoreQuotaNotice, setHasFirestoreQuotaNotice] = useState(() => isFirestoreQuotaExhausted());
 
   useEffect(() => {
-    const handleQuotaExceeded = () => {
-      setHasGmpQuotaNotice(true);
-    };
-    window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    const handleGmpQuota = () => setHasGmpQuotaNotice(true);
+    const handleFirestoreQuota = () => setHasFirestoreQuotaNotice(true);
+    window.addEventListener('gmp-quota-exceeded', handleGmpQuota);
+    window.addEventListener('firestore-quota-exceeded', handleFirestoreQuota);
     return () => {
-      window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+      window.removeEventListener('gmp-quota-exceeded', handleGmpQuota);
+      window.removeEventListener('firestore-quota-exceeded', handleFirestoreQuota);
     };
   }, []);
 
@@ -193,12 +210,6 @@ export default function App() {
     const unsubPatients = subscribePatients(
       (data) => {
         const cleaned = (data || []).filter(p => !MOCK_PATIENT_IDS.includes(p.id));
-        // Delete mock items from firestore in background
-        data?.forEach(p => {
-          if (MOCK_PATIENT_IDS.includes(p.id)) {
-            deletePatientFromFirestore(p.id);
-          }
-        });
         setPatients(cleaned);
         setIsFirestoreReady(true);
       },
@@ -216,11 +227,6 @@ export default function App() {
     const unsubContacts = subscribeContacts(
       (data) => {
         const cleaned = (data || []).filter(c => !MOCK_CONTACT_IDS.includes(c.id));
-        data?.forEach(c => {
-          if (MOCK_CONTACT_IDS.includes(c.id)) {
-            deleteContactFromFirestore(c.id);
-          }
-        });
         setContacts(cleaned);
       },
       () => {}
@@ -252,7 +258,17 @@ export default function App() {
         if (data && data.length > 0) {
           setUsers(data);
         } else {
-          saveAllUsersToFirestore(INITIAL_USERS);
+          const saved = safeStorage.getItem('tb_phon_users_v2');
+          if (saved) {
+            try {
+              const parsed = JSON.parse(saved);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setUsers(parsed);
+                return;
+              }
+            } catch (e) {}
+          }
+          setUsers(INITIAL_USERS);
         }
       },
       () => {}
@@ -275,67 +291,74 @@ export default function App() {
     });
 
     // 9. Subscribe TBCXR Screenings (7 Risk Groups)
-    // Delete any lingering system mock screenings from Firestore on initialization
-    MOCK_TBCXR_IDS.forEach(mockId => {
-      deleteTbcxrScreeningFromFirestore(mockId);
-    });
-
     const unsubScreenings = subscribeTbcxrScreenings((data) => {
-      // Find any lingering system mock records from Firestore and remove them
-      data?.forEach(s => {
-        if (isSystemMockScreening(s)) {
-          deleteTbcxrScreeningFromFirestore(s.id);
-        }
-      });
-
       const cleanRemoteData = (data || []).filter(s => !isSystemMockScreening(s));
 
-      if (cleanRemoteData.length > 0) {
-        setTbcxrScreenings(prev => {
-          const cleanPrev = prev.filter(p => !isSystemMockScreening(p));
-          const remoteMap = new Map(cleanRemoteData.map(d => [d.id, d]));
-          const merged = [...cleanRemoteData];
+      setTbcxrScreenings(prev => {
+        // Collect current local non-mock records
+        const localClean = prev.filter(p => !isSystemMockScreening(p));
 
-          cleanPrev.forEach(localItem => {
-            if (!remoteMap.has(localItem.id)) {
-              // Local item not yet in firestore: preserve and sync
-              merged.unshift(localItem);
-              saveTbcxrScreeningToFirestore(localItem);
-            } else {
-              const remoteItem = remoteMap.get(localItem.id)!;
-              const localTime = new Date(localItem.updatedAt || localItem.createdAt || 0).getTime();
-              const remoteTime = new Date(remoteItem.updatedAt || remoteItem.createdAt || 0).getTime();
-              if (localTime > remoteTime) {
-                const idx = merged.findIndex(m => m.id === localItem.id);
-                if (idx !== -1) merged[idx] = localItem;
-                saveTbcxrScreeningToFirestore(localItem);
-              }
-            }
-          });
-          safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(merged));
-          return merged;
-        });
-      } else {
-        // No remote records or empty collection: restore only real user records from localStorage
-        const saved = safeStorage.getItem('tb_phon_tbcxr_screenings_v1');
-        let localData: TbCxrScreeningRecord[] = [];
+        // Read from storage as well
+        const saved = safeStorage.getItem('tb_phon_tbcxr_screenings_v1') || 
+                      safeStorage.getItem('tb_phon_tbcxr_screenings_backup');
+        let fromStorage: TbCxrScreeningRecord[] = [];
         if (saved) {
           try {
             const parsed = JSON.parse(saved);
-            localData = Array.isArray(parsed) ? parsed.filter(s => !isSystemMockScreening(s)) : [];
+            if (Array.isArray(parsed)) {
+              fromStorage = parsed.filter(s => !isSystemMockScreening(s));
+            }
           } catch (e) {}
         }
-        if (localData && localData.length > 0) {
-          saveAllTbcxrScreeningsToFirestore(localData);
-          setTbcxrScreenings(localData);
-        } else {
-          setTbcxrScreenings([]);
-          safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify([]));
-        }
-      }
+
+        const recordMap = new Map<string, TbCxrScreeningRecord>();
+
+        // 1. Add clean remote records
+        cleanRemoteData.forEach(r => recordMap.set(r.id, r));
+
+        // 2. Merge records from storage
+        fromStorage.forEach(sItem => {
+          const existing = recordMap.get(sItem.id);
+          if (!existing) {
+            recordMap.set(sItem.id, sItem);
+          } else {
+            const sTime = new Date(sItem.updatedAt || sItem.createdAt || 0).getTime();
+            const exTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+            if (sTime >= exTime || sItem.isUserSaved) {
+              recordMap.set(sItem.id, { ...existing, ...sItem });
+            }
+          }
+        });
+
+        // 3. Merge records from local state
+        localClean.forEach(lItem => {
+          const existing = recordMap.get(lItem.id);
+          if (!existing) {
+            recordMap.set(lItem.id, lItem);
+          } else {
+            const lTime = new Date(lItem.updatedAt || lItem.createdAt || 0).getTime();
+            const exTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+            if (lTime >= exTime || lItem.isUserSaved) {
+              recordMap.set(lItem.id, { ...existing, ...lItem });
+            }
+          }
+        });
+
+        const merged = Array.from(recordMap.values());
+        merged.sort((a, b) => {
+          const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+          const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+          return timeB - timeA;
+        });
+
+        safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(merged));
+        safeStorage.setItem('tb_phon_tbcxr_screenings_backup', JSON.stringify(merged));
+        return merged;
+      });
     });
 
     return () => {
+      clearTimeout(timer);
       unsubPatients();
       unsubContacts();
       unsubInvestigations();
@@ -348,56 +371,38 @@ export default function App() {
     };
   }, []);
 
-  // Auto-Save Effects to LocalStorage AND Firestore Cloud DB
+  // Auto-Save Effects to LocalStorage (Offline Resilient)
   useEffect(() => {
     safeStorage.setItem('tb_phon_patients_v3', JSON.stringify(patients));
-    if (patients.length > 0) {
-      saveAllPatientsToFirestore(patients);
-    }
   }, [patients]);
 
   useEffect(() => {
     safeStorage.setItem('tb_phon_contacts_v3', JSON.stringify(contacts));
-    if (contacts.length > 0) {
-      saveAllContactsToFirestore(contacts);
-    }
   }, [contacts]);
 
   useEffect(() => {
     safeStorage.setItem('tb_phon_investigations_v1', JSON.stringify(investigations));
-    if (investigations.length > 0) {
-      saveAllInvestigationsToFirestore(investigations);
-    }
   }, [investigations]);
 
   useEffect(() => {
     safeStorage.setItem('tb_phon_home_visits_v1', JSON.stringify(homeVisits));
-    if (homeVisits.length > 0) {
-      saveAllHomeVisitsToFirestore(homeVisits);
-    }
   }, [homeVisits]);
 
   useEffect(() => {
     const cleanScreenings = tbcxrScreenings.filter(s => !isSystemMockScreening(s));
     safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(cleanScreenings));
-    if (cleanScreenings.length > 0) {
-      saveAllTbcxrScreeningsToFirestore(cleanScreenings);
-    }
   }, [tbcxrScreenings]);
 
   useEffect(() => {
     safeStorage.setItem('tb_phon_line_config_v2', JSON.stringify(lineConfig));
-    saveLineConfigToFirestore(lineConfig);
   }, [lineConfig]);
 
   useEffect(() => {
     safeStorage.setItem('tb_phon_logs_v3', JSON.stringify(logs));
-    saveAllLogsToFirestore(logs);
   }, [logs]);
 
   useEffect(() => {
     safeStorage.setItem('tb_phon_users_v2', JSON.stringify(users));
-    saveAllUsersToFirestore(users);
   }, [users]);
 
   useEffect(() => {
@@ -653,6 +658,7 @@ export default function App() {
   // User Account Management Handlers
   const handleAddUser = (newUser: UserAccount) => {
     setUsers(prev => [newUser, ...prev]);
+    saveUserToFirestore(newUser);
     showToast(`เพิ่มผู้ใช้งานและกำหนดรหัสผ่านสำเร็จ: ${newUser.fullName} (${newUser.username})`);
   };
 
@@ -661,6 +667,7 @@ export default function App() {
     if (currentUser?.id === updatedUser.id) {
       setCurrentUser(updatedUser);
     }
+    saveUserToFirestore(updatedUser);
     showToast(`อัปเดตข้อมูลและรหัสผ่านผู้ใช้งานสำเร็จ`);
   };
 
@@ -790,31 +797,36 @@ export default function App() {
 
   // TBCXR Screening Handlers (7 Risk Groups)
   const handleAddTbcxrScreening = (newRec: TbCxrScreeningRecord) => {
+    const recordToSave: TbCxrScreeningRecord = { ...newRec, isUserSaved: true };
     setTbcxrScreenings(prev => {
       const cleanPrev = prev.filter(s => !isSystemMockScreening(s));
-      const exists = cleanPrev.some(s => s.id === newRec.id);
-      const updated = exists ? cleanPrev.map(s => s.id === newRec.id ? newRec : s) : [newRec, ...cleanPrev];
+      const exists = cleanPrev.some(s => s.id === recordToSave.id);
+      const updated = exists ? cleanPrev.map(s => s.id === recordToSave.id ? recordToSave : s) : [recordToSave, ...cleanPrev];
       safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(updated));
+      safeStorage.setItem('tb_phon_tbcxr_screenings_backup', JSON.stringify(updated));
       return updated;
     });
-    saveTbcxrScreeningToFirestore(newRec);
-    showToast(`บันทึกการคัดกรอง TBCXR สำเร็จ: ${newRec.prefix}${newRec.firstName} ${newRec.lastName}`);
+    saveTbcxrScreeningToFirestore(recordToSave);
+    showToast(`บันทึกการคัดกรอง TBCXR สำเร็จ: ${recordToSave.prefix}${recordToSave.firstName} ${recordToSave.lastName}`);
   };
 
   const handleUpdateTbcxrScreening = (updatedRec: TbCxrScreeningRecord) => {
+    const recordToSave: TbCxrScreeningRecord = { ...updatedRec, isUserSaved: true };
     setTbcxrScreenings(prev => {
       const cleanPrev = prev.filter(s => !isSystemMockScreening(s));
-      const updated = cleanPrev.map(s => s.id === updatedRec.id ? updatedRec : s);
+      const updated = cleanPrev.map(s => s.id === recordToSave.id ? recordToSave : s);
       safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(updated));
+      safeStorage.setItem('tb_phon_tbcxr_screenings_backup', JSON.stringify(updated));
       return updated;
     });
-    saveTbcxrScreeningToFirestore(updatedRec);
+    saveTbcxrScreeningToFirestore(recordToSave);
   };
 
   const handleDeleteTbcxrScreening = (screeningId: string) => {
     setTbcxrScreenings(prev => {
       const updated = prev.filter(s => s.id !== screeningId);
       safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(updated));
+      safeStorage.setItem('tb_phon_tbcxr_screenings_backup', JSON.stringify(updated));
       return updated;
     });
     deleteTbcxrScreeningFromFirestore(screeningId);
@@ -899,6 +911,13 @@ export default function App() {
 
   const handleAddLog = (log: NotificationLog) => {
     setLogs(prev => [log, ...prev]);
+    saveLogToFirestore(log);
+  };
+
+  const handleUpdateLineConfig = (cfg: LineNotificationConfig) => {
+    setLineConfig(cfg);
+    safeStorage.setItem('tb_phon_line_config_v2', JSON.stringify(cfg));
+    saveLineConfigToFirestore(cfg);
   };
 
   const handleTriggerPatientNotify = (patient: Patient) => {
@@ -916,17 +935,15 @@ export default function App() {
 
   const handleQuickNotify = (message: string) => {
     showToast(`ส่งข้อความแจ้งเตือนด่วนถึงกลุ่มงานสาธารณสุข อ.โพนนาแก้ว เรียบร้อยแล้ว`);
-    setLogs(prev => [
-      {
-        id: `LOG-${Date.now()}`,
-        timestamp: new Date().toLocaleString('th-TH'),
-        type: 'system',
-        targetName: lineConfig.lineGroupName,
-        message,
-        status: 'sent'
-      },
-      ...prev
-    ]);
+    const newLog: NotificationLog = {
+      id: `LOG-${Date.now()}`,
+      timestamp: new Date().toLocaleString('th-TH'),
+      type: 'system',
+      targetName: lineConfig.lineGroupName,
+      message,
+      status: 'sent'
+    };
+    handleAddLog(newLog);
   };
 
   const subdistrictNames = PHON_NA_KAEO_SUBDISTRICTS.map(s => s.name);
@@ -1089,6 +1106,22 @@ export default function App() {
           <button
             onClick={() => setHasGmpQuotaNotice(false)}
             className="ml-2 text-amber-700 hover:text-amber-950 font-bold px-1.5 py-0.5 rounded text-xs transition"
+            title="ปิดการแจ้งเตือน"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Firestore Cloud Quota In-App Notice */}
+      {hasFirestoreQuotaNotice && (
+        <div className="bg-sky-50 border-b border-sky-200 text-sky-950 px-4 py-2 text-xs text-center sticky top-0 z-50 shadow-sm flex items-center justify-center gap-2">
+          <span>
+            ☁️ <strong>โหมดสำรองข้อมูลปลอดภัย (Local Safe Storage):</strong> โควตา Cloud ประจำวันเต็ม ระบบบันทึกข้อมูลทั้งหมดลงในเครื่องให้โดยอัตโนมัติ ไม่สูญหายและทำงานได้ต่อเนื่อง 100%
+          </span>
+          <button
+            onClick={() => setHasFirestoreQuotaNotice(false)}
+            className="ml-2 text-sky-700 hover:text-sky-950 font-bold px-1.5 py-0.5 rounded text-xs transition"
             title="ปิดการแจ้งเตือน"
           >
             ✕
@@ -1280,9 +1313,9 @@ export default function App() {
         {activeTab === 'line-gas' && (
           <LineAppsScript
             lineConfig={lineConfig}
-            onUpdateLineConfig={setLineConfig}
+            onUpdateLineConfig={handleUpdateLineConfig}
             logs={logs}
-            onAddLog={newLog => setLogs(prev => [newLog, ...prev])}
+            onAddLog={handleAddLog}
           />
         )}
       </main>

@@ -837,6 +837,8 @@ export interface TbCxrScreeningRecord {
   notes?: string;
   screenerName: string; // ผู้บันทึก/ผู้คัดกรอง
   screenerRole?: string;
+  isUserSaved?: boolean; // ระบุว่าเป็นข้อมูลจริงที่ผู้ใช้บันทึก
+  isSystemMock?: boolean; // ระบุว่าเป็นข้อมูลจำลองที่มากับระบบ
   createdAt: string;
   updatedAt: string;
 }
