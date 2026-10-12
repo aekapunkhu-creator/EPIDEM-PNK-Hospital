@@ -9,7 +9,7 @@ import {
   UserAccount,
   Patient
 } from '../types';
-import { PHON_NA_KAEO_SUBDISTRICTS, getVillagesForSubdistrict } from '../data/mockData';
+import { PHON_NA_KAEO_SUBDISTRICTS, getVillagesForSubdistrict, isSystemMockScreening } from '../data/mockData';
 import {
   ShieldAlert,
   Search,
@@ -124,9 +124,14 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
 
   const [formData, setFormData] = useState<Partial<TbCxrScreeningRecord>>(initialForm);
 
+  // Clean Screenings (Excluding any system mock records)
+  const cleanScreenings = useMemo(() => {
+    return (screenings || []).filter(item => !isSystemMockScreening(item));
+  }, [screenings]);
+
   // Filtered Screenings
   const filteredScreenings = useMemo(() => {
-    return screenings.filter(item => {
+    return cleanScreenings.filter(item => {
       // Risk group filter
       if (selectedRiskGroup !== 'ALL' && item.riskGroup !== selectedRiskGroup) return false;
 
@@ -165,17 +170,17 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
 
       return true;
     });
-  }, [screenings, selectedRiskGroup, cxrFilter, mtbFilter, subdistrictFilter, onlyAbnormal, onlyMtbDetected, onlyPending, searchQuery]);
+  }, [cleanScreenings, selectedRiskGroup, cxrFilter, mtbFilter, subdistrictFilter, onlyAbnormal, onlyMtbDetected, onlyPending, searchQuery]);
 
   // KPI Statistics
   const stats = useMemo(() => {
-    const total = screenings.length;
-    const cxrAbnormal = screenings.filter(s => s.cxrResult === 'Abnormal TB Suspect').length;
-    const mtbDetected = screenings.filter(s => s.mtbResult.includes('MTB detected') || s.mtbResult.includes('AFB Positive')).length;
-    const rifResistant = screenings.filter(s => s.mtbResult.includes('Rif Resistance detected')).length;
-    const activeTbDiagnosed = screenings.filter(s => s.diagnosisStatus === 'วัณโรคปอด (Active TB - เข้าเกณฑ์รักษา)').length;
-    const tptInitiated = screenings.filter(s => s.actionPlan === 'เริ่มยาป้องกันวัณโรค (TPT: 3HP/1HP/6H)' || s.tptRegimen).length;
-    const pendingCases = screenings.filter(s => s.diagnosisStatus === 'รอผลตรวจยืนยัน' || s.mtbResult === 'Pending' || s.cxrResult === 'Pending').length;
+    const total = cleanScreenings.length;
+    const cxrAbnormal = cleanScreenings.filter(s => s.cxrResult === 'Abnormal TB Suspect').length;
+    const mtbDetected = cleanScreenings.filter(s => s.mtbResult.includes('MTB detected') || s.mtbResult.includes('AFB Positive')).length;
+    const rifResistant = cleanScreenings.filter(s => s.mtbResult.includes('Rif Resistance detected')).length;
+    const activeTbDiagnosed = cleanScreenings.filter(s => s.diagnosisStatus === 'วัณโรคปอด (Active TB - เข้าเกณฑ์รักษา)').length;
+    const tptInitiated = cleanScreenings.filter(s => s.actionPlan === 'เริ่มยาป้องกันวัณโรค (TPT: 3HP/1HP/6H)' || s.tptRegimen).length;
+    const pendingCases = cleanScreenings.filter(s => s.diagnosisStatus === 'รอผลตรวจยืนยัน' || s.mtbResult === 'Pending' || s.cxrResult === 'Pending').length;
 
     // Per Risk Group stats
     const riskGroupCounts: Record<TBRiskGroupKey, { total: number; abnormal: number; mtb: number }> = {
@@ -188,7 +193,7 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
       healthcare_worker: { total: 0, abnormal: 0, mtb: 0 }
     };
 
-    screenings.forEach(s => {
+    cleanScreenings.forEach(s => {
       if (riskGroupCounts[s.riskGroup]) {
         riskGroupCounts[s.riskGroup].total += 1;
         if (s.cxrResult === 'Abnormal TB Suspect') riskGroupCounts[s.riskGroup].abnormal += 1;
@@ -208,23 +213,25 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
       pendingCases,
       riskGroupCounts
     };
-  }, [screenings]);
+  }, [cleanScreenings]);
 
-  // Helper to generate unique screening ID
+  // Helper to generate unique screening ID (starts at 101+ to avoid clash with old mock IDs)
   const generateUniqueScreeningId = (list: TbCxrScreeningRecord[]) => {
-    const numbers = list
+    const validList = (list || []).filter(s => !isSystemMockScreening(s));
+    const numbers = validList
       .map(s => {
         const match = s.id?.match(/CXR-67-(\d+)/i);
         return match ? parseInt(match[1], 10) : 0;
       })
       .filter(n => !isNaN(n) && n > 0);
     const maxNum = numbers.length > 0 ? Math.max(...numbers) : 0;
-    return `CXR-67-${String(maxNum + 1).padStart(3, '0')}`;
+    const nextNum = Math.max(maxNum + 1, 101);
+    return `CXR-67-${String(nextNum).padStart(3, '0')}`;
   };
 
   // Open Form for Adding New Record
   const handleOpenAddForm = (preselectedGroup?: TBRiskGroupKey) => {
-    const newId = generateUniqueScreeningId(screenings);
+    const newId = generateUniqueScreeningId(cleanScreenings);
     setFormData({
       ...initialForm,
       id: newId,
@@ -260,7 +267,7 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
     };
     const hasAny = Object.values(symptomsObj).some(val => Boolean(val));
 
-    const targetId = editingRecord ? editingRecord.id : (formData.id || generateUniqueScreeningId(screenings));
+    const targetId = editingRecord ? editingRecord.id : (formData.id || generateUniqueScreeningId(cleanScreenings));
     const finalRecord: TbCxrScreeningRecord = {
       id: targetId,
       screeningDate: formData.screeningDate || new Date().toISOString().split('T')[0],
@@ -855,7 +862,7 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
               รายการคัดกรอง TBCXR & ผลตรวจ MTB
             </h3>
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">
-              แสดง {filteredScreenings.length} จาก {screenings.length} รายการ
+              แสดง {filteredScreenings.length} จาก {cleanScreenings.length} รายการ
             </span>
           </div>
 
@@ -868,11 +875,34 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
           </button>
         </div>
 
-        {filteredScreenings.length === 0 ? (
+        {cleanScreenings.length === 0 ? (
+          <div className="p-16 text-center text-slate-500 space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-100 shadow-sm">
+              <Sparkles className="w-8 h-8 text-emerald-600" />
+            </div>
+            <div className="space-y-1">
+              <h4 className="text-base font-bold text-slate-800">
+                ยังไม่มีข้อมูลการคัดกรอง TBCXR ในระบบ
+              </h4>
+              <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+                ข้อมูลตัวอย่างระบบถูกนำออกเรียบร้อยแล้ว ระบบพร้อมสำหรับการบันทึกผลการคัดกรองวัณโรคเชิงรุก (CXR & GeneXpert MTB) 7 กลุ่มเสี่ยง อ.โพนนาแก้ว
+              </p>
+            </div>
+            <div className="pt-2">
+              <button
+                onClick={() => handleOpenAddForm()}
+                className="px-5 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl text-xs shadow-md shadow-emerald-900/20 transition active:scale-95 inline-flex items-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ บันทึกคัดกรองรายใหม่</span>
+              </button>
+            </div>
+          </div>
+        ) : filteredScreenings.length === 0 ? (
           <div className="p-12 text-center text-slate-500 space-y-3">
             <AlertCircle className="w-10 h-10 text-slate-400 mx-auto" />
             <p className="text-sm font-semibold text-slate-700">ไม่พบข้อมูลตามเงื่อนไขตัวกรอง</p>
-            <p className="text-xs text-slate-400">ระบบมีข้อมูลทั้งหมด {screenings.length} รายการ ลองปรับเปลี่ยนตัวกรอง หรือคลิก "+ บันทึกคัดกรองรายใหม่"</p>
+            <p className="text-xs text-slate-400">ระบบมีข้อมูลทั้งหมด {cleanScreenings.length} รายการ ลองปรับเปลี่ยนตัวกรอง หรือคลิก "+ บันทึกคัดกรองรายใหม่"</p>
             <div className="pt-2 flex items-center justify-center gap-3">
               <button
                 onClick={() => {
@@ -887,7 +917,7 @@ export const TbCxrScreeningManagement: React.FC<TbCxrScreeningManagementProps> =
                 }}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs transition"
               >
-                ล้างตัวกรองทั้งหมด (แสดงครบ {screenings.length} รายการ)
+                ล้างตัวกรองทั้งหมด (แสดงครบ {cleanScreenings.length} รายการ)
               </button>
               <button
                 onClick={() => handleOpenAddForm()}

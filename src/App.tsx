@@ -67,7 +67,7 @@ import {
   fetchPatientByIdFromFirestore
 } from './services/firebaseStore';
 import { safeStorage } from './utils/safeStorage';
-import { INITIAL_TBCXR_SCREENINGS } from './data/mockData';
+import { INITIAL_TBCXR_SCREENINGS, MOCK_TBCXR_IDS, isSystemMockScreening } from './data/mockData';
 
 const MOCK_PATIENT_IDS = ['TB-6701', 'TB-6702', 'TB-6703', 'TB-6704', 'TB-6705'];
 const MOCK_CONTACT_IDS = ['CT-101', 'CT-102', 'CT-103', 'CT-104'];
@@ -122,9 +122,18 @@ export default function App() {
   const [tbcxrScreenings, setTbcxrScreenings] = useState<TbCxrScreeningRecord[]>(() => {
     const saved = safeStorage.getItem('tb_phon_tbcxr_screenings_v1');
     if (saved) {
-      try { return JSON.parse(saved); } catch (e) { console.error('Error loading tbcxr screenings from storage', e); }
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.filter(s => !isSystemMockScreening(s));
+          safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(cleaned));
+          return cleaned;
+        }
+      } catch (e) {
+        console.error('Error loading tbcxr screenings from storage', e);
+      }
     }
-    return INITIAL_TBCXR_SCREENINGS;
+    return [];
   });
 
   const [callSessions, setCallSessions] = useState<VideoCallSession[]>([]);
@@ -266,14 +275,28 @@ export default function App() {
     });
 
     // 9. Subscribe TBCXR Screenings (7 Risk Groups)
-    const unsubScreenings = subscribeTbcxrScreenings((data) => {
-      if (data && data.length > 0) {
-        setTbcxrScreenings(prev => {
-          // Merge strategy: preserve any local items that haven't synced yet or are newer
-          const remoteMap = new Map(data.map(d => [d.id, d]));
-          const merged = [...data];
+    // Delete any lingering system mock screenings from Firestore on initialization
+    MOCK_TBCXR_IDS.forEach(mockId => {
+      deleteTbcxrScreeningFromFirestore(mockId);
+    });
 
-          prev.forEach(localItem => {
+    const unsubScreenings = subscribeTbcxrScreenings((data) => {
+      // Find any lingering system mock records from Firestore and remove them
+      data?.forEach(s => {
+        if (isSystemMockScreening(s)) {
+          deleteTbcxrScreeningFromFirestore(s.id);
+        }
+      });
+
+      const cleanRemoteData = (data || []).filter(s => !isSystemMockScreening(s));
+
+      if (cleanRemoteData.length > 0) {
+        setTbcxrScreenings(prev => {
+          const cleanPrev = prev.filter(p => !isSystemMockScreening(p));
+          const remoteMap = new Map(cleanRemoteData.map(d => [d.id, d]));
+          const merged = [...cleanRemoteData];
+
+          cleanPrev.forEach(localItem => {
             if (!remoteMap.has(localItem.id)) {
               // Local item not yet in firestore: preserve and sync
               merged.unshift(localItem);
@@ -292,21 +315,22 @@ export default function App() {
           safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(merged));
           return merged;
         });
-      } else if (data && data.length === 0) {
-        // Seed initial data to firestore if empty, but check localStorage first!
+      } else {
+        // No remote records or empty collection: restore only real user records from localStorage
         const saved = safeStorage.getItem('tb_phon_tbcxr_screenings_v1');
         let localData: TbCxrScreeningRecord[] = [];
         if (saved) {
           try {
-            localData = JSON.parse(saved);
+            const parsed = JSON.parse(saved);
+            localData = Array.isArray(parsed) ? parsed.filter(s => !isSystemMockScreening(s)) : [];
           } catch (e) {}
         }
         if (localData && localData.length > 0) {
           saveAllTbcxrScreeningsToFirestore(localData);
           setTbcxrScreenings(localData);
         } else {
-          saveAllTbcxrScreeningsToFirestore(INITIAL_TBCXR_SCREENINGS);
-          setTbcxrScreenings(INITIAL_TBCXR_SCREENINGS);
+          setTbcxrScreenings([]);
+          safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify([]));
         }
       }
     });
@@ -354,9 +378,10 @@ export default function App() {
   }, [homeVisits]);
 
   useEffect(() => {
-    safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(tbcxrScreenings));
-    if (tbcxrScreenings.length > 0) {
-      saveAllTbcxrScreeningsToFirestore(tbcxrScreenings);
+    const cleanScreenings = tbcxrScreenings.filter(s => !isSystemMockScreening(s));
+    safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(cleanScreenings));
+    if (cleanScreenings.length > 0) {
+      saveAllTbcxrScreeningsToFirestore(cleanScreenings);
     }
   }, [tbcxrScreenings]);
 
@@ -766,8 +791,9 @@ export default function App() {
   // TBCXR Screening Handlers (7 Risk Groups)
   const handleAddTbcxrScreening = (newRec: TbCxrScreeningRecord) => {
     setTbcxrScreenings(prev => {
-      const exists = prev.some(s => s.id === newRec.id);
-      const updated = exists ? prev.map(s => s.id === newRec.id ? newRec : s) : [newRec, ...prev];
+      const cleanPrev = prev.filter(s => !isSystemMockScreening(s));
+      const exists = cleanPrev.some(s => s.id === newRec.id);
+      const updated = exists ? cleanPrev.map(s => s.id === newRec.id ? newRec : s) : [newRec, ...cleanPrev];
       safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(updated));
       return updated;
     });
@@ -777,7 +803,8 @@ export default function App() {
 
   const handleUpdateTbcxrScreening = (updatedRec: TbCxrScreeningRecord) => {
     setTbcxrScreenings(prev => {
-      const updated = prev.map(s => s.id === updatedRec.id ? updatedRec : s);
+      const cleanPrev = prev.filter(s => !isSystemMockScreening(s));
+      const updated = cleanPrev.map(s => s.id === updatedRec.id ? updatedRec : s);
       safeStorage.setItem('tb_phon_tbcxr_screenings_v1', JSON.stringify(updated));
       return updated;
     });
